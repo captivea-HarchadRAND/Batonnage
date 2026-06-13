@@ -518,6 +518,11 @@ app.get('/api/rdvs', auth, async (req, res) => {
   }
 
   sql += ` ORDER BY r.created_at DESC`;
+  const { limit } = req.query;
+  if (limit) {
+    const n = parseInt(limit, 10);
+    if (Number.isInteger(n) && n > 0) { sql += ` LIMIT ?`; params.push(n); }
+  }
   res.json(dbRows(db, sql, params));
 });
 
@@ -629,14 +634,17 @@ app.put('/api/rdvs/:id', auth, async (req, res) => {
 app.post('/api/rdvs/bulk-archive', auth, async (req, res) => {
   const { ids } = req.body;
   if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'IDs requis' });
+  const safeIds = ids.filter(isValidUUID);
+  if (!safeIds.length) return res.json({ ok: true });
   const db = await getDB();
-  ids.filter(isValidUUID).forEach(id => {
-    const rdv = dbRow(db, `SELECT * FROM rdvs WHERE id=?`, [id]);
-    if (!rdv) return;
-    if (req.user.role === 'sdr' && rdv.sdr_id !== req.user.id) return;
-    db.run(`UPDATE rdvs SET archived=1 WHERE id=?`, [id]);
-  });
-  saveDB();
+  const ph = safeIds.map(() => '?').join(',');
+  const rdvs = dbRows(db, `SELECT id, sdr_id FROM rdvs WHERE id IN (${ph})`, safeIds);
+  const allowed = rdvs.filter(r => req.user.role !== 'sdr' || r.sdr_id === req.user.id).map(r => r.id);
+  if (allowed.length) {
+    const ph2 = allowed.map(() => '?').join(',');
+    db.run(`UPDATE rdvs SET archived=1 WHERE id IN (${ph2})`, allowed);
+    saveDB();
+  }
   res.json({ ok: true });
 });
 
@@ -652,18 +660,19 @@ app.post('/api/rdvs/bulk-delete', auth, requireRole('manager', 'admin'), async (
 app.post('/api/rdvs/bulk-done', auth, async (req, res) => {
   const { ids, date_done } = req.body;
   if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'IDs requis' });
+  const safeIds = ids.filter(isValidUUID);
+  if (!safeIds.length) return res.json({ ok: true, count: 0 });
   const db = await getDB();
   const today = date_done || new Date().toISOString().split('T')[0];
-  let count = 0;
-  ids.filter(isValidUUID).forEach(id => {
-    const rdv = dbRow(db, `SELECT * FROM rdvs WHERE id=?`, [id]);
-    if (!rdv) return;
-    if (req.user.role === 'sdr' && rdv.sdr_id !== req.user.id) return;
-    db.run(`UPDATE rdvs SET status='done', date_done=? WHERE id=?`, [today, id]);
-    count++;
-  });
-  saveDB();
-  res.json({ ok: true, count });
+  const ph = safeIds.map(() => '?').join(',');
+  const rdvs = dbRows(db, `SELECT id, sdr_id FROM rdvs WHERE id IN (${ph})`, safeIds);
+  const allowed = rdvs.filter(r => req.user.role !== 'sdr' || r.sdr_id === req.user.id).map(r => r.id);
+  if (allowed.length) {
+    const ph2 = allowed.map(() => '?').join(',');
+    db.run(`UPDATE rdvs SET status='done', date_done=? WHERE id IN (${ph2})`, [today, ...allowed]);
+    saveDB();
+  }
+  res.json({ ok: true, count: allowed.length });
 });
 
 app.delete('/api/rdvs/:id', auth, requireRole('manager', 'admin'), async (req, res) => {
@@ -797,10 +806,11 @@ app.get('/api/synthesis', auth, requireRole('manager', 'admin'), async (req, res
        SUM(CASE WHEN r.status='done' AND COALESCE(r.archived,0)=0 ${doneFilter} THEN 1 ELSE 0 END) as rdv_done,
        COALESCE(o.objectif_rdv_done, 8) as objectif
      FROM users u
-     JOIN marches m ON m.id = u.marche_id AND m.archived = 0
+     JOIN user_marches um ON um.user_id = u.id
+     JOIN marches m ON m.id = um.marche_id AND m.archived = 0
      LEFT JOIN rdvs r ON r.sdr_id = u.id AND r.marche_id = m.id
      LEFT JOIN objectifs o ON o.sdr_id = u.id
-     WHERE u.status='active' AND u.role='sdr' AND u.marche_id IS NOT NULL
+     WHERE u.status='active' AND u.role='sdr'
      GROUP BY u.id, u.name, u.email, m.id, m.name, m.color
      ORDER BY m.position, m.name, u.name`,
     params);
@@ -1072,7 +1082,7 @@ app.get('/api/profile/trend', auth, async (req, res) => {
     const row = dbRow(db,
       `SELECT SUM(CASE WHEN (crm_url_pris IS NOT NULL OR notes='saisie manuelle') THEN 1 ELSE 0 END) as pris,
               SUM(CASE WHEN status='done' THEN 1 ELSE 0 END) as done
-       FROM rdvs WHERE sdr_id=? AND strftime('%Y-%m', date_pris)=?`,
+       FROM rdvs WHERE sdr_id=? AND COALESCE(archived,0)=0 AND strftime('%Y-%m', date_pris)=?`,
       [uid, key]);
     months.push({ label, pris: row?.pris||0, done: row?.done||0 });
   }
@@ -1093,8 +1103,11 @@ app.get('/api/profile/stats', auth, async (req, res) => {
        SUM(CASE WHEN status='done' THEN 1 ELSE 0 END) as done,
        SUM(CASE WHEN status='no_show' THEN 1 ELSE 0 END) as no_show
      FROM rdvs
-     WHERE sdr_id=? AND strftime('%Y-%m', date_pris) = ?`,
-    [uid, monthKey]);
+     WHERE sdr_id=? AND COALESCE(archived,0)=0 AND (
+       strftime('%Y-%m', date_pris) = ?
+       OR (notes='saisie manuelle' AND annee=?)
+     )`,
+    [uid, monthKey, year]);
 
   const obj = dbRow(db, `SELECT objectif_rdv_done FROM objectifs WHERE sdr_id=?`, [uid]);
   const objectif = obj?.objectif_rdv_done ?? null;
@@ -1577,25 +1590,30 @@ app.get('/api/admin/performance', auth, requireRole('manager', 'admin'), async (
 
     let history = [];
     let activeSdrList = [];
+    let fallbackObjMap = {};
     if (sdr_id) {
       history = dbRows(db,
         `SELECT sdr_id, objectif, effective_from FROM objectif_history WHERE sdr_id=? ORDER BY effective_from ASC`,
         [sdr_id]);
+      const cur = dbRow(db, `SELECT objectif_rdv_done FROM objectifs WHERE sdr_id=?`, [sdr_id]);
+      if (cur) fallbackObjMap[sdr_id] = cur.objectif_rdv_done;
     } else {
       activeSdrList = dbRows(db, `SELECT id FROM users WHERE role='sdr' AND status='active'`);
       if (activeSdrList.length > 0) {
         const ph = activeSdrList.map(() => '?').join(',');
+        const ids = activeSdrList.map(s => s.id);
         history = dbRows(db,
           `SELECT sdr_id, objectif, effective_from FROM objectif_history WHERE sdr_id IN (${ph}) ORDER BY effective_from ASC`,
-          activeSdrList.map(s => s.id));
+          ids);
+        dbRows(db, `SELECT sdr_id, objectif_rdv_done FROM objectifs WHERE sdr_id IN (${ph})`, ids)
+          .forEach(o => { fallbackObjMap[o.sdr_id] = o.objectif_rdv_done; });
       }
     }
 
     function getObjSdr(sid, ym) {
       const entries = history.filter(h => h.sdr_id === sid && h.effective_from <= ym);
       if (entries.length > 0) return entries[entries.length - 1].objectif;
-      const cur = dbRow(db, `SELECT objectif_rdv_done FROM objectifs WHERE sdr_id=?`, [sid]);
-      return cur?.objectif_rdv_done ?? 8;
+      return fallbackObjMap[sid] ?? 8;
     }
 
     function getObjPeriod(ym) {
@@ -1708,6 +1726,8 @@ if (fs.existsSync(DIST)) {
 
 async function fixISOWeeks() {
   const db = await getDB();
+  const done = dbRow(db, `SELECT value FROM settings WHERE key='iso_weeks_fixed'`);
+  if (done?.value === '1') return;
   const rdvs = dbRows(db, `SELECT id, date_pris, date_done FROM rdvs WHERE date_pris IS NOT NULL OR date_done IS NOT NULL`);
   let fixed = 0;
   rdvs.forEach(r => {
@@ -1717,7 +1737,9 @@ async function fixISOWeeks() {
     db.run(`UPDATE rdvs SET semaine=?, annee=? WHERE id=?`, [semaine, annee, r.id]);
     fixed++;
   });
-  if (fixed > 0) { saveDB(); console.log(`[fixISOWeeks] ${fixed} RDVs recalculés`); }
+  db.run(`INSERT OR REPLACE INTO settings VALUES ('iso_weeks_fixed', '1')`);
+  saveDB();
+  if (fixed > 0) console.log(`[fixISOWeeks] ${fixed} RDVs recalculés`);
 }
 
 // Garantit que le marché par défaut de chaque utilisateur fait partie de ses
