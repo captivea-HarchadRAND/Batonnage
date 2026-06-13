@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "batonnage-frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "cwd": "C:\\Users\\Captivea-Harchad\\Documents\\batonnage\\frontend",
+      "port": 5174
+    }
+  ]
+}

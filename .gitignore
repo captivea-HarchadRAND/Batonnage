@@ -1,0 +1,25 @@
+# Secrets / config locale
+.env
+backend/.env
+
+# Base de données
+backend/data/
+backend/_pentest_data/
+backend/_freshtest/
+
+# Logs runtime
+backend/*.log
+backend/server.out.log
+backend/server.err.log
+
+# Artefacts de test
+backend/_pentest*
+backend/_fresh*
+
+# Dépendances
+node_modules/
+backend/node_modules/
+frontend/node_modules/
+
+# Build frontend
+frontend/dist/
