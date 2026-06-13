@@ -1,4 +1,5 @@
 const express = require('express');
+const helmet = require('helmet');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const { v4: uuidv4 } = require('uuid');
@@ -53,6 +54,7 @@ const AZURE_TENANT_ID     = process.env.AZURE_TENANT_ID || 'common';
 const AZURE_CLIENT_SECRET = process.env.AZURE_CLIENT_SECRET || '';
 const APP_URL             = process.env.APP_URL || 'http://localhost:8080';
 
+app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors({
   origin: ALLOWED_ORIGINS,
   credentials: true,
@@ -92,10 +94,34 @@ async function verifyPassword(pw, stored) {
   return timingSafeEqual(buf, expected);
 }
 
-// ── Rate-limit en mémoire (anti brute-force login) ────────────────────────────
-const loginAttempts = new Map(); // clé = IP+email → { count, first }
+// ── Rate-limit en mémoire ─────────────────────────────────────────────────────
 const RL_WINDOW_MS = 15 * 60 * 1000; // 15 min
-const RL_MAX = 10;                    // 10 tentatives / fenêtre
+
+function makeRateLimit(max, keyFn) {
+  const attempts = new Map();
+  return function (req, res, next) {
+    const key = keyFn(req);
+    const now = Date.now();
+    const rec = attempts.get(key);
+    if (rec && now - rec.first < RL_WINDOW_MS) {
+      if (rec.count >= max) {
+        const retry = Math.ceil((RL_WINDOW_MS - (now - rec.first)) / 1000);
+        res.set('Retry-After', String(retry));
+        return res.status(429).json({ error: `Trop de tentatives. Réessayez dans ${Math.ceil(retry / 60)} min.` });
+      }
+      rec.count++;
+    } else {
+      attempts.set(key, { count: 1, first: now });
+    }
+    if (attempts.size > 5000) {
+      for (const [k, v] of attempts) if (now - v.first > RL_WINDOW_MS) attempts.delete(k);
+    }
+    next();
+  };
+}
+
+const loginAttempts = new Map();
+const RL_MAX = 10; // conservé pour clearLoginAttempts
 
 function loginRateLimit(req, res, next) {
   const email = (req.body?.email || '').toLowerCase().trim();
@@ -112,12 +138,14 @@ function loginRateLimit(req, res, next) {
   } else {
     loginAttempts.set(key, { count: 1, first: now });
   }
-  // Purge opportuniste des entrées expirées
   if (loginAttempts.size > 5000) {
     for (const [k, v] of loginAttempts) if (now - v.first > RL_WINDOW_MS) loginAttempts.delete(k);
   }
   next();
 }
+
+// 5 tentatives / 15 min par IP sur les endpoints d'invitation
+const inviteRateLimit = makeRateLimit(5, req => `invite|${req.ip}`);
 
 function clearLoginAttempts(req) {
   const email = (req.body?.email || '').toLowerCase().trim();
@@ -252,7 +280,7 @@ app.get('/api/auth/me', auth, async (req, res) => {
   res.json({ user: { ...req.user, marche_ids } });
 });
 
-app.get('/api/auth/invite/:token', async (req, res) => {
+app.get('/api/auth/invite/:token', inviteRateLimit, async (req, res) => {
   const db = await getDB();
   const user = dbRow(db,
     `SELECT id, name, email FROM users WHERE invite_token=? AND (invite_expires IS NULL OR invite_expires > datetime('now'))`,
@@ -261,7 +289,7 @@ app.get('/api/auth/invite/:token', async (req, res) => {
   res.json({ user });
 });
 
-app.post('/api/auth/invite/:token', async (req, res) => {
+app.post('/api/auth/invite/:token', inviteRateLimit, async (req, res) => {
   const { password } = req.body;
   const pwErr = validatePassword(password);
   if (pwErr) return res.status(400).json({ error: pwErr });
@@ -288,6 +316,8 @@ app.post('/api/auth/invite/:token', async (req, res) => {
 
 app.get('/api/auth/microsoft', (req, res) => {
   if (!AZURE_CLIENT_ID) return res.redirect('/login?error=' + encodeURIComponent('SSO Microsoft non configuré'));
+  const state = uuidv4();
+  res.cookie('sso_state', state, { httpOnly: true, sameSite: 'lax', secure: process.env.COOKIE_SECURE === 'true' || process.env.NODE_ENV === 'production', maxAge: 300000 });
   const redirectUri = `${APP_URL}/api/auth/microsoft/callback`;
   const params = new URLSearchParams({
     client_id: AZURE_CLIENT_ID,
@@ -295,15 +325,17 @@ app.get('/api/auth/microsoft', (req, res) => {
     redirect_uri: redirectUri,
     response_mode: 'query',
     scope: 'openid email profile',
-    state: uuidv4(),
+    state,
   });
   res.redirect(`https://login.microsoftonline.com/${AZURE_TENANT_ID}/oauth2/v2.0/authorize?${params}`);
 });
 
 app.get('/api/auth/microsoft/callback', async (req, res) => {
-  const { code, error: msError } = req.query;
+  const { code, error: msError, state } = req.query;
   if (msError) return res.redirect('/login?error=' + encodeURIComponent('Connexion Microsoft annulée'));
   if (!code) return res.redirect('/login?error=' + encodeURIComponent('Code OAuth manquant'));
+  if (!state || state !== req.cookies?.sso_state) return res.redirect('/login?error=' + encodeURIComponent('Requête invalide (CSRF)'));
+  res.clearCookie('sso_state');
   try {
     const redirectUri = `${APP_URL}/api/auth/microsoft/callback`;
     const tokenRes = await fetch(`https://login.microsoftonline.com/${AZURE_TENANT_ID}/oauth2/v2.0/token`, {
@@ -337,11 +369,7 @@ app.get('/api/auth/microsoft/callback', async (req, res) => {
     db.run(`INSERT INTO sessions VALUES (?,?,?,?,?)`, [sessionToken, user.id, user.name, user.role, expires]);
     saveDB();
 
-    res.cookie('session', sessionToken, {
-      httpOnly: true, sameSite: 'lax',
-      secure: process.env.COOKIE_SECURE === 'true',
-      maxAge: SESSION_TTL_DAYS * 86400000,
-    });
+    res.cookie('session', sessionToken, sessionCookieOpts());
     res.redirect('/');
   } catch (err) {
     console.error('Microsoft SSO error:', err);
@@ -602,7 +630,7 @@ app.post('/api/rdvs/bulk-archive', auth, async (req, res) => {
   const { ids } = req.body;
   if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'IDs requis' });
   const db = await getDB();
-  ids.forEach(id => {
+  ids.filter(isValidUUID).forEach(id => {
     const rdv = dbRow(db, `SELECT * FROM rdvs WHERE id=?`, [id]);
     if (!rdv) return;
     if (req.user.role === 'sdr' && rdv.sdr_id !== req.user.id) return;
@@ -616,7 +644,7 @@ app.post('/api/rdvs/bulk-delete', auth, requireRole('manager', 'admin'), async (
   const { ids } = req.body;
   if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'IDs requis' });
   const db = await getDB();
-  ids.forEach(id => db.run(`DELETE FROM rdvs WHERE id=?`, [id]));
+  ids.filter(isValidUUID).forEach(id => db.run(`DELETE FROM rdvs WHERE id=?`, [id]));
   saveDB();
   res.json({ ok: true });
 });
@@ -627,7 +655,7 @@ app.post('/api/rdvs/bulk-done', auth, async (req, res) => {
   const db = await getDB();
   const today = date_done || new Date().toISOString().split('T')[0];
   let count = 0;
-  ids.forEach(id => {
+  ids.filter(isValidUUID).forEach(id => {
     const rdv = dbRow(db, `SELECT * FROM rdvs WHERE id=?`, [id]);
     if (!rdv) return;
     if (req.user.role === 'sdr' && rdv.sdr_id !== req.user.id) return;
@@ -884,6 +912,7 @@ app.put('/api/profile', auth, async (req, res) => {
     if (pwErr2) return res.status(400).json({ error: pwErr2 });
     const hash = await hashPassword(new_password);
     db.run(`UPDATE users SET password_hash=? WHERE id=?`, [hash, req.user.id]);
+    db.run(`DELETE FROM sessions WHERE user_id=? AND token!=?`, [req.user.id, req.cookies.session]);
   }
 
   if (name) db.run(`UPDATE users SET name=? WHERE id=?`, [name, req.user.id]);
