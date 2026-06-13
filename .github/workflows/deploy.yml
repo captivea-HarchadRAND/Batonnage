@@ -25,23 +25,33 @@ jobs:
         env:
           VITE_API_URL: https://vps-531e8f97.vps.ovh.net
 
-      - name: Deploy backend to VPS
-        uses: appleboy/scp-action@v0.1.7
+      - name: Deploy to VPS via SSH
+        uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: "backend/server.js,backend/db.js,backend/package.json,backend/package-lock.json"
-          target: /var/www/batonnage
+          script: |
+            mkdir -p /var/www/batonnage/backend
+            mkdir -p /var/www/batonnage/frontend/dist
 
-      - name: Deploy frontend dist to VPS
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: "frontend/dist"
-          target: /var/www/batonnage
+      - name: Copy backend files
+        run: |
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > /tmp/deploy_key
+          chmod 600 /tmp/deploy_key
+          scp -i /tmp/deploy_key -o StrictHostKeyChecking=no \
+            backend/server.js backend/db.js backend/package.json backend/package-lock.json \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/var/www/batonnage/backend/
+          rm /tmp/deploy_key
+
+      - name: Copy frontend dist
+        run: |
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > /tmp/deploy_key
+          chmod 600 /tmp/deploy_key
+          scp -i /tmp/deploy_key -o StrictHostKeyChecking=no -r \
+            frontend/dist/* \
+            ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:/var/www/batonnage/frontend/dist/
+          rm /tmp/deploy_key
 
       - name: Install dependencies & restart PM2
         uses: appleboy/ssh-action@v1.0.3
