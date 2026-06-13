@@ -23,7 +23,7 @@ jobs:
           npm install
           npm run build
         env:
-          VITE_API_URL: https://vps-531e8f97.vps.ovh.net
+          VITE_API_URL: https://batonnage.captivea.mg
 
       - name: Setup SSH key
         env:
