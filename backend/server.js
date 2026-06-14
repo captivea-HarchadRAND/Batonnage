@@ -32,9 +32,9 @@ const PORT = process.env.PORT || 8080;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
 const ALLOWED_ORIGINS = [
   ...FRONTEND_URL.split(',').map(u => u.trim()),
-  'http://localhost:5173',
-  'http://localhost:5174',
-  'http://localhost:8080',
+  ...(process.env.NODE_ENV !== 'production'
+    ? ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:8080']
+    : []),
 ];
 const SESSION_TTL_DAYS = 14;
 const INVITE_TTL_DAYS = 7;
@@ -251,7 +251,7 @@ function clearLoginAttempts(req) {
 function sessionCookieOpts() {
   return {
     httpOnly: true,
-    sameSite: 'lax',
+    sameSite: 'strict',
     secure: process.env.COOKIE_SECURE === 'true' || process.env.NODE_ENV === 'production',
     maxAge: SESSION_TTL_DAYS * 86400000,
   };
@@ -446,7 +446,7 @@ app.get('/api/auth/microsoft/callback', async (req, res) => {
       }),
     });
     const tokens = await tokenRes.json();
-    if (tokens.error) return res.redirect('/login?error=' + encodeURIComponent(tokens.error_description || tokens.error));
+    if (tokens.error) return res.redirect('/login?error=' + encodeURIComponent('Authentification Microsoft échouée. Contactez un administrateur.'));
 
     const meRes = await fetch('https://graph.microsoft.com/v1.0/me?$select=displayName,mail,userPrincipalName', {
       headers: { Authorization: `Bearer ${tokens.access_token}` },
@@ -522,6 +522,7 @@ app.post('/api/call-issues', auth, async (req, res) => {
   const { sdr_id, marche_id, issue_type, date, notes } = req.body;
   if (!issue_type) return res.status(400).json({ error: 'Type de problème requis' });
   if (sdr_id && !isValidUUID(sdr_id)) return res.status(400).json({ error: 'ID SDR invalide' });
+  if (marche_id && !isValidUUID(marche_id)) return res.status(400).json({ error: 'marche_id invalide' });
   const targetSdr = req.user.role === 'sdr' ? req.user.id : (sdr_id || req.user.id);
   const db = await getDB();
   const id = uuidv4();
@@ -1222,7 +1223,7 @@ app.put('/api/profile/avatar', auth, async (req, res) => {
   // Whitelist de formats matriciels uniquement — pas de SVG (peut contenir du script)
   if (!avatar || !/^data:image\/(png|jpeg|jpg|webp|gif);base64,/.test(avatar))
     return res.status(400).json({ error: 'Image invalide (formats acceptés : png, jpeg, webp, gif)' });
-  if (avatar.length > 500000) return res.status(400).json({ error: 'Image trop grande (max ~375 Ko)' });
+  if (avatar.length > 200000) return res.status(400).json({ error: 'Image trop grande (max ~150 Ko)' });
   const db = await getDB();
   db.run(`UPDATE users SET avatar=? WHERE id=?`, [avatar, req.user.id]);
   saveDB();
@@ -1409,6 +1410,7 @@ app.get('/api/admin/rdvs/manual', auth, requireRole('manager', 'admin'), async (
 app.put('/api/admin/rdvs/manual/:sdrId/:week/:year', auth, requireRole('manager', 'admin'), async (req, res) => {
   try {
     const { sdrId } = req.params;
+    if (!isValidUUID(sdrId)) return res.status(400).json({ error: 'ID SDR invalide' });
     const iWeek = parseInt(req.params.week, 10);
     const iYear = parseInt(req.params.year, 10);
     const { marche_id, pris = 0, done = 0 } = req.body;
@@ -1417,8 +1419,8 @@ app.put('/api/admin/rdvs/manual/:sdrId/:week/:year', auth, requireRole('manager'
       return res.status(400).json({ error: 'Semaine invalide (1-53)' });
     if (!Number.isInteger(iYear) || iYear < 2020 || iYear > 2099)
       return res.status(400).json({ error: 'Année invalide' });
-    if (!marche_id || typeof marche_id !== 'string' || marche_id.length > 64)
-      return res.status(400).json({ error: 'marche_id requis' });
+    if (!marche_id || !isValidUUID(marche_id))
+      return res.status(400).json({ error: 'marche_id invalide' });
 
     const totalPris = Math.max(0, Math.min(parseInt(pris, 10) || 0, 999));
     const totalDone = Math.max(0, Math.min(parseInt(done, 10) || 0, 999));
@@ -1487,8 +1489,16 @@ app.delete('/api/admin/users/:id', auth, requireRole('admin'), async (req, res) 
   const user = dbRow(db, `SELECT status FROM users WHERE id=?`, [req.params.id]);
   if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
   if (user.status !== 'disabled') return res.status(400).json({ error: 'Désactivez d\'abord l\'utilisateur avant de le supprimer définitivement' });
-  db.run(`DELETE FROM users WHERE id=?`, [req.params.id]);
-  db.run(`DELETE FROM sessions WHERE user_id=?`, [req.params.id]);
+  const uid = req.params.id;
+  db.run(`DELETE FROM users          WHERE id=?`,      [uid]);
+  db.run(`DELETE FROM sessions       WHERE user_id=?`, [uid]);
+  db.run(`DELETE FROM rdvs           WHERE sdr_id=?`,  [uid]);
+  db.run(`DELETE FROM badges         WHERE user_id=?`, [uid]);
+  db.run(`DELETE FROM call_logs      WHERE sdr_id=?`,  [uid]);
+  db.run(`DELETE FROM objectifs      WHERE sdr_id=?`,  [uid]);
+  db.run(`DELETE FROM objectif_history WHERE sdr_id=?`,[uid]);
+  db.run(`DELETE FROM call_issues    WHERE sdr_id=?`,  [uid]);
+  db.run(`DELETE FROM user_marches   WHERE user_id=?`, [uid]);
   saveDB();
   res.json({ ok: true });
 });
