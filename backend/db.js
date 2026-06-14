@@ -321,6 +321,25 @@ function migrate(db) {
      CREATE INDEX IF NOT EXISTS idx_call_issues_sdr ON call_issues(sdr_id);
      COMMIT;
      PRAGMA foreign_keys = ON;`,
+
+    // v20: rate limiting persisté (résiste aux redémarrages du serveur)
+    `CREATE TABLE IF NOT EXISTS rate_limits (
+       key        TEXT    PRIMARY KEY,
+       hits       INTEGER NOT NULL DEFAULT 1,
+       reset_time INTEGER NOT NULL
+     );`,
+
+    // v21: journal des événements de sécurité
+    `CREATE TABLE IF NOT EXISTS security_events (
+       id         TEXT PRIMARY KEY,
+       type       TEXT NOT NULL,
+       ip         TEXT,
+       user_id    TEXT,
+       email      TEXT,
+       detail     TEXT,
+       created_at TEXT DEFAULT (datetime('now'))
+     );
+     CREATE INDEX IF NOT EXISTS idx_sec_events_created ON security_events(created_at DESC);`,
   ];
 
   for (let i = current; i < migrations.length; i++) {

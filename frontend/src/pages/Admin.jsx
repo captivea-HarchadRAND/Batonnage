@@ -1690,6 +1690,158 @@ function ManualRdvTab({ marches }) {
   );
 }
 
+const EVENT_META = {
+  login_ok:       { label: 'Connexion réussie',        color: '#22c55e', icon: '✓' },
+  login_failed:   { label: 'Échec de connexion',       color: '#f59e0b', icon: '⚠' },
+  login_blocked:  { label: 'IP bloquée (rate limit)',  color: '#ef4444', icon: '🚫' },
+  ip_unblocked:   { label: 'IP débloquée',             color: '#3b82f6', icon: '🔓' },
+  password_reset: { label: 'Mot de passe réinitialisé',color: '#8b5cf6', icon: '🔑' },
+};
+
+const BLOCK_TYPE_LABELS = {
+  login_global: 'Connexion (IP globale)',
+  login_email:  'Connexion (email)',
+  invite:       'Invitation',
+};
+
+function SecurityTab() {
+  const [data,       setData]       = useState(null);
+  const [loading,    setLoading]    = useState(true);
+  const [unblocking, setUnblocking] = useState(null);
+  const [error,      setError]      = useState('');
+
+  const load = useCallback(() => {
+    setLoading(true);
+    api.getSecurity()
+      .then(setData)
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleUnblock = async (ip) => {
+    setUnblocking(ip);
+    setError('');
+    try {
+      await api.unblockIp(ip);
+      load();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setUnblocking(null);
+    }
+  };
+
+  if (loading) return <div style={{ padding: 24, color: 'var(--text-muted)' }}>Chargement…</div>;
+
+  const { blocked = [], events = [] } = data || {};
+
+  return (
+    <div style={{ padding: 24 }}>
+      {error && <div className="alert alert-error" style={{ marginBottom: 16 }}>{error}</div>}
+
+      {/* IPs bloquées */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1 }}>
+          🔒 IPs bloquées ({blocked.length})
+        </div>
+        <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={load}>↻ Actualiser</button>
+      </div>
+
+      {blocked.length === 0 ? (
+        <div className="text-muted text-sm" style={{ marginBottom: 32, padding: '12px 0' }}>Aucune IP actuellement bloquée.</div>
+      ) : (
+        <div className="table-wrap" style={{ marginBottom: 32 }}>
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>IP</th>
+                <th>Type</th>
+                <th>Email</th>
+                <th style={{ textAlign: 'center' }}>Tentatives</th>
+                <th>Expire dans</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {blocked.map(b => {
+                const remaining = Math.max(0, Math.ceil((b.reset_time - Date.now()) / 60000));
+                return (
+                  <tr key={b.key}>
+                    <td><code style={{ fontSize: 12 }}>{b.ip}</code></td>
+                    <td className="text-sm">{BLOCK_TYPE_LABELS[b.type] || b.type}</td>
+                    <td className="text-sm text-muted">{b.email || '—'}</td>
+                    <td style={{ textAlign: 'center' }}>
+                      <span style={{ background: '#ef4444', color: '#fff', borderRadius: 4, padding: '2px 8px', fontSize: 12, fontWeight: 700 }}>
+                        {b.hits}
+                      </span>
+                    </td>
+                    <td className="text-sm text-muted">{remaining > 0 ? `${remaining} min` : 'expiré'}</td>
+                    <td>
+                      <button
+                        className="btn btn-ghost"
+                        style={{ fontSize: 12, padding: '4px 10px' }}
+                        disabled={unblocking === b.ip}
+                        onClick={() => handleUnblock(b.ip)}
+                      >
+                        {unblocking === b.ip ? '…' : '🔓 Débloquer'}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Événements récents */}
+      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>
+        📋 Événements récents ({events.length})
+      </div>
+
+      {events.length === 0 ? (
+        <div className="text-muted text-sm">Aucun événement enregistré.</div>
+      ) : (
+        <div className="table-wrap">
+          <table className="admin-table">
+            <thead>
+              <tr>
+                <th>Horodatage</th>
+                <th>Type</th>
+                <th>IP</th>
+                <th>Utilisateur / Email</th>
+                <th>Détail</th>
+              </tr>
+            </thead>
+            <tbody>
+              {events.map(ev => {
+                const meta = EVENT_META[ev.type] || { label: ev.type, color: 'var(--text-muted)', icon: '•' };
+                return (
+                  <tr key={ev.id}>
+                    <td className="text-sm text-muted" style={{ whiteSpace: 'nowrap' }}>
+                      {new Date(ev.created_at).toLocaleString('fr-FR')}
+                    </td>
+                    <td>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, fontWeight: 600, color: meta.color }}>
+                        <span>{meta.icon}</span>{meta.label}
+                      </span>
+                    </td>
+                    <td><code style={{ fontSize: 12 }}>{ev.ip || '—'}</code></td>
+                    <td className="text-sm">{ev.user_name || ev.email || '—'}</td>
+                    <td className="text-sm text-muted">{ev.detail || '—'}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Admin() {
   const [tab, setTab] = useState('users');
   const [marches, setMarches] = useState([]);
@@ -1704,6 +1856,7 @@ export default function Admin() {
     { id: 'manual',     label: '✍️ Saisie RDV' },
     { id: 'categories', label: '📋 Catégories Problèmes' },
     { id: 'settings',   label: '⚙️ Paramètres' },
+    { id: 'security',   label: '🔒 Sécurité' },
   ];
 
   return (
@@ -1731,6 +1884,7 @@ export default function Admin() {
         {tab === 'manual'     && <ManualRdvTab marches={marches} />}
         {tab === 'categories' && <CategoriesProblemeTab />}
         {tab === 'settings'   && <SettingsTab />}
+        {tab === 'security'   && <SecurityTab />}
       </div>
     </div>
   );

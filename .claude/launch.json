@@ -2,6 +2,13 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "batonnage-backend",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["server.js"],
+      "cwd": "C:\\Users\\Captivea-Harchad\\Documents\\batonnage\\backend",
+      "port": 8080
+    },
+    {
       "name": "batonnage-frontend",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],

@@ -15,7 +15,7 @@ export default function Login() {
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const urlError = params.get('error');
-    if (urlError) setError(urlError);
+    if (urlError) setError(urlError.slice(0, 120));
   }, []);
 
   const titleRef = useRef(null);

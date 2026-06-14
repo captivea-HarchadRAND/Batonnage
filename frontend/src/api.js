@@ -117,4 +117,8 @@ export const api = {
   getManualRdvs: () => request('GET', '/admin/rdvs/manual'),
   saveManualRdv: (sdrId, week, year, marche_id, pris, done) =>
     request('PUT', `/admin/rdvs/manual/${sdrId}/${week}/${year}`, { marche_id, pris, done }),
+
+  // Sécurité
+  getSecurity: () => request('GET', '/admin/security'),
+  unblockIp: (ip) => request('DELETE', '/admin/security/unblock', { ip }),
 };

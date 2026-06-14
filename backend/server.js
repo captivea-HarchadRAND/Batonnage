@@ -155,7 +155,9 @@ app.use(cors({
   origin: ALLOWED_ORIGINS,
   credentials: true,
 }));
-app.use(express.json({ limit: '2mb' }));
+app.use((req, res, next) => {
+  express.json({ limit: req.path === '/api/profile/avatar' ? '2mb' : '512kb' })(req, res, next);
+});
 app.use(cookieParser());
 
 // Serve uploaded files
@@ -190,14 +192,72 @@ async function verifyPassword(pw, stored) {
   return timingSafeEqual(buf, expected);
 }
 
-// ── Rate-limit via express-rate-limit ────────────────────────────────────────
+// ── Rate-limit persisté en SQLite (résiste aux redémarrages) ─────────────────
 const RL_WINDOW_MS = 15 * 60 * 1000; // 15 min
 
+class SqliteRateLimitStore {
+  localKeys = true;
+  constructor(windowMs) { this.windowMs = windowMs; }
+  async increment(key) {
+    const db = await getDB();
+    const now = Date.now();
+    db.run(`DELETE FROM rate_limits WHERE reset_time < ?`, [now]);
+    const rec = dbRow(db, `SELECT hits, reset_time FROM rate_limits WHERE key=?`, [key]);
+    let hits, resetTime;
+    if (rec) {
+      hits = rec.hits + 1;
+      resetTime = rec.reset_time;
+      db.run(`UPDATE rate_limits SET hits=? WHERE key=?`, [hits, key]);
+    } else {
+      hits = 1;
+      resetTime = now + this.windowMs;
+      db.run(`INSERT INTO rate_limits (key, hits, reset_time) VALUES (?,1,?)`, [key, resetTime]);
+    }
+    saveDB();
+    return { totalHits: hits, resetTime: new Date(resetTime) };
+  }
+  async decrement(key) {
+    const db = await getDB();
+    const rec = dbRow(db, `SELECT hits FROM rate_limits WHERE key=?`, [key]);
+    if (rec && rec.hits > 1) {
+      db.run(`UPDATE rate_limits SET hits=hits-1 WHERE key=?`, [key]);
+      saveDB();
+    } else {
+      db.run(`DELETE FROM rate_limits WHERE key=?`, [key]);
+      saveDB();
+    }
+  }
+  async resetKey(key) {
+    const db = await getDB();
+    db.run(`DELETE FROM rate_limits WHERE key=?`, [key]);
+    saveDB();
+  }
+}
+
+// Par IP+email : 10 tentatives / 15 min (bloque le brute-force sur un compte)
 const loginRateLimit = rateLimit({
   windowMs: RL_WINDOW_MS,
   max: 10,
+  store: new SqliteRateLimitStore(RL_WINDOW_MS),
   keyGenerator: (req) => `${req.ip}|${(req.body?.email || '').toLowerCase().trim()}`,
-  handler: (_req, res) => res.status(429).json({ error: 'Trop de tentatives. Réessayez dans 15 min.' }),
+  handler: async (req, res) => {
+    await logSecurityEvent('login_blocked', req.ip, null, (req.body?.email || '').toLowerCase().trim(), 'Rate limit IP+email');
+    res.status(429).json({ error: 'Trop de tentatives. Réessayez dans 15 min.' });
+  },
+  standardHeaders: false,
+  legacyHeaders: false,
+});
+
+// Par IP seule : 20 tentatives / 15 min (bloque le scan de comptes depuis une même IP)
+const loginIpRateLimit = rateLimit({
+  windowMs: RL_WINDOW_MS,
+  max: 20,
+  store: new SqliteRateLimitStore(RL_WINDOW_MS),
+  keyGenerator: (req) => `ip|${req.ip}`,
+  handler: async (req, res) => {
+    await logSecurityEvent('login_blocked', req.ip, null, (req.body?.email || '').toLowerCase().trim(), 'Rate limit IP globale');
+    res.status(429).json({ error: 'Trop de tentatives. Réessayez dans 15 min.' });
+  },
   standardHeaders: false,
   legacyHeaders: false,
 });
@@ -205,6 +265,7 @@ const loginRateLimit = rateLimit({
 const inviteRateLimit = rateLimit({
   windowMs: RL_WINDOW_MS,
   max: 5,
+  store: new SqliteRateLimitStore(RL_WINDOW_MS),
   keyGenerator: (req) => `invite|${req.ip}`,
   handler: (_req, res) => res.status(429).json({ error: 'Trop de tentatives. Réessayez dans 15 min.' }),
   standardHeaders: false,
@@ -214,6 +275,23 @@ const inviteRateLimit = rateLimit({
 function clearLoginAttempts(req) {
   const email = (req.body?.email || '').toLowerCase().trim();
   loginRateLimit.resetKey(`${req.ip}|${email}`);
+  loginIpRateLimit.resetKey(`ip|${req.ip}`);
+}
+
+async function logSecurityEvent(type, ip, userId, email, detail) {
+  try {
+    const db = await getDB();
+    db.run(
+      `INSERT INTO security_events (id, type, ip, user_id, email, detail) VALUES (?,?,?,?,?,?)`,
+      [uuidv4(), type, ip || null, userId || null, email || null, detail || null]
+    );
+    db.run(`DELETE FROM security_events WHERE id NOT IN (
+      SELECT id FROM security_events ORDER BY created_at DESC LIMIT 1000
+    )`);
+    saveDB();
+  } catch (e) {
+    console.error('[logSecurityEvent]', e);
+  }
 }
 
 // Options cookie de session — secure auto en production
@@ -304,16 +382,22 @@ function countActiveAdmins(db, exceptId = null) {
 
 // ─── Auth routes ─────────────────────────────────────────────────────────────
 
-app.post('/api/auth/login', loginRateLimit, async (req, res) => {
+app.post('/api/auth/login', loginIpRateLimit, loginRateLimit, async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'Email et mot de passe requis' });
 
   const db = await getDB();
   const user = dbRow(db, `SELECT id, name, email, role, marche_id, avatar, password_hash FROM users WHERE email=? AND status='active'`, [email.toLowerCase().trim()]);
-  if (!user || !user.password_hash) return res.status(401).json({ error: 'Identifiants invalides' });
+  if (!user || !user.password_hash) {
+    await logSecurityEvent('login_failed', req.ip, null, email.toLowerCase().trim(), 'Compte introuvable ou inactif');
+    return res.status(401).json({ error: 'Identifiants invalides' });
+  }
 
   const ok = await verifyPassword(password, user.password_hash);
-  if (!ok) return res.status(401).json({ error: 'Identifiants invalides' });
+  if (!ok) {
+    await logSecurityEvent('login_failed', req.ip, user.id, user.email, 'Mot de passe incorrect');
+    return res.status(401).json({ error: 'Identifiants invalides' });
+  }
 
   clearLoginAttempts(req); // succès → on remet le compteur à zéro
 
@@ -321,6 +405,7 @@ app.post('/api/auth/login', loginRateLimit, async (req, res) => {
   const expires = new Date(Date.now() + SESSION_TTL_DAYS * 86400000).toISOString();
   db.run(`INSERT INTO sessions VALUES (?,?,?,?,?)`, [token, user.id, user.name, user.role, expires]);
   saveDB();
+  await logSecurityEvent('login_ok', req.ip, user.id, user.email, null);
 
   res.cookie('session', token, sessionCookieOpts());
 
@@ -1803,6 +1888,57 @@ app.put('/api/admin/settings', auth, requireRole('admin'), async (req, res) => {
   }
   saveDB();
   res.json({ ok: true });
+});
+
+// ─── Sécurité : IPs bloquées + événements ────────────────────────────────────
+
+app.get('/api/admin/security', auth, requireRole('admin'), async (req, res) => {
+  const db = await getDB();
+  const now = Date.now();
+
+  const rawBlocked = dbRows(db,
+    `SELECT key, hits, reset_time FROM rate_limits WHERE reset_time > ? ORDER BY hits DESC, reset_time DESC`,
+    [now]
+  );
+  const blocked = rawBlocked.map(r => {
+    let type, ip, email = null;
+    if (r.key.startsWith('ip|')) {
+      type = 'login_global'; ip = r.key.slice(3);
+    } else if (r.key.startsWith('invite|')) {
+      type = 'invite'; ip = r.key.slice(7);
+    } else {
+      const sep = r.key.indexOf('|');
+      type = 'login_email';
+      ip   = sep > 0 ? r.key.slice(0, sep) : r.key;
+      email = sep > 0 ? r.key.slice(sep + 1) : null;
+    }
+    return { ...r, reset_time: Number(r.reset_time), hits: Number(r.hits), type, ip, email };
+  });
+
+  const events = dbRows(db,
+    `SELECT e.id, e.type, e.ip, e.user_id, e.email, e.detail, e.created_at, u.name as user_name
+     FROM security_events e
+     LEFT JOIN users u ON u.id = e.user_id
+     ORDER BY e.created_at DESC LIMIT 100`
+  );
+
+  res.json({ blocked, events });
+});
+
+app.delete('/api/admin/security/unblock', auth, requireRole('admin'), async (req, res) => {
+  const { ip } = req.body;
+  if (!ip || typeof ip !== 'string' || ip.length > 64 || !/^[\d.a-f:]+$/i.test(ip))
+    return res.status(400).json({ error: 'IP invalide' });
+  const db = await getDB();
+  const before = dbRows(db,
+    `SELECT key FROM rate_limits WHERE key = ? OR key = ? OR key GLOB ?`,
+    [`ip|${ip}`, `invite|${ip}`, `${ip}|*`]
+  );
+  db.run(`DELETE FROM rate_limits WHERE key = ? OR key = ? OR key GLOB ?`,
+    [`ip|${ip}`, `invite|${ip}`, `${ip}|*`]);
+  saveDB();
+  await logSecurityEvent('ip_unblocked', req.ip, req.user.id, null, `IP débloquée : ${ip}`);
+  res.json({ ok: true, removed: before.length });
 });
 
 // ─── Admin: Create default admin on first run ─────────────────────────────────
