@@ -605,7 +605,7 @@ app.get('/api/rdvs', auth, async (req, res) => {
   const { limit } = req.query;
   if (limit) {
     const n = parseInt(limit, 10);
-    if (Number.isInteger(n) && n > 0) { sql += ` LIMIT ?`; params.push(n); }
+    if (Number.isInteger(n) && n > 0) { sql += ` LIMIT ?`; params.push(Math.min(n, 500)); }
   }
   res.json(dbRows(db, sql, params));
 });
@@ -659,7 +659,7 @@ app.post('/api/rdvs', auth, async (req, res) => {
       `INSERT INTO rdvs (id, sdr_id, marche_id, semaine, annee, crm_url_pris, date_pris, date_prevue, crm_url_done, date_done, status, notes, nb_appels)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [id, targetSdr, marche_id, week, year, crm_url_pris ?? null, date_pris ?? null, date_prevue ?? null,
-       crm_url_done ?? null, date_done ?? null, status, notes ?? null, nb_appels ? parseInt(nb_appels) : 0]
+       crm_url_done ?? null, date_done ?? null, status, notes ?? null, Math.max(0, Math.min(parseInt(nb_appels) || 0, 999))]
     );
     saveDB();
 
@@ -1006,7 +1006,7 @@ app.put('/api/profile', auth, async (req, res) => {
     if (pwErr2) return res.status(400).json({ error: pwErr2 });
     const hash = await hashPassword(new_password);
     db.run(`UPDATE users SET password_hash=? WHERE id=?`, [hash, req.user.id]);
-    db.run(`DELETE FROM sessions WHERE user_id=? AND token!=?`, [req.user.id, req.cookies.session]);
+    db.run(`DELETE FROM sessions WHERE user_id=?`, [req.user.id]);
   }
 
   if (name) db.run(`UPDATE users SET name=? WHERE id=?`, [name, req.user.id]);
@@ -1079,7 +1079,7 @@ app.put('/api/admin/call-logs/:sdr_id/:semaine/:annee', auth, requireRole('manag
     return res.status(400).json({ error: 'Semaine invalide (1-53)' });
   if (!Number.isInteger(iAnnee) || iAnnee < 2020 || iAnnee > 2099)
     return res.status(400).json({ error: 'Année invalide' });
-  const val = Math.max(0, parseInt(req.body.nb_appels, 10) || 0);
+  const val = Math.max(0, Math.min(parseInt(req.body.nb_appels, 10) || 0, 999));
   const db = await getDB();
   const existing = dbRow(db, `SELECT id FROM call_logs WHERE sdr_id=? AND semaine=? AND annee=?`, [sdr_id, iSemaine, iAnnee]);
   if (existing) {
@@ -1307,6 +1307,14 @@ app.put('/api/admin/users/:id', auth, requireRole('manager', 'admin'), async (re
   const db = await getDB();
   const current = dbRow(db, `SELECT status, role FROM users WHERE id=?`, [req.params.id]);
   if (!current) return res.status(404).json({ error: 'Utilisateur introuvable' });
+
+  if (status != null && !['active', 'pending', 'disabled'].includes(status))
+    return res.status(400).json({ error: 'Statut invalide' });
+
+  if (email) {
+    const dup = dbRow(db, `SELECT id FROM users WHERE email=? AND id!=?`, [email.toLowerCase(), req.params.id]);
+    if (dup) return res.status(400).json({ error: 'Cet email est déjà utilisé' });
+  }
 
   // Un manager ne peut pas modifier un compte admin (anti-prise de contrôle)
   if (req.user.role !== 'admin' && current.role === 'admin')

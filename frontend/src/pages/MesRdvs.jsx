@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { api } from '../api.js';
 import { useUser } from '../context/UserContext.jsx';
 import { safeUrl } from '../utils.js';
@@ -191,6 +191,7 @@ function RdvRows({ rdvs, showSdr, onMarkDone, onNoShow, isAdmin, selected, onTog
             type="checkbox"
             checked={selected?.has(rdv.id) ?? false}
             onChange={() => onToggle(rdv.id)}
+            aria-label={`Sélectionner RDV ${rdv.sdr_name ?? ''} S${rdv.semaine}`}
             style={{ cursor: 'pointer', width: 15, height: 15, accentColor: 'var(--primary)' }}
           />
         </td>
@@ -437,15 +438,15 @@ export default function MesRdvs() {
   };
 
   // Autocomplete SDR
-  const sdrNames = [...new Set(rdvs.map(r => r.sdr_name))].sort((a, b) => a.localeCompare(b));
-  const suggestions = search.length >= 1
+  const sdrNames = useMemo(() => [...new Set(rdvs.map(r => r.sdr_name))].sort((a, b) => a.localeCompare(b)), [rdvs]);
+  const suggestions = useMemo(() => search.length >= 1
     ? sdrNames.filter(name => norm(name).includes(norm(search)) && norm(name) !== norm(search))
-    : [];
+    : [], [sdrNames, search]);
 
   // Filtre SDR (recherche, insensible aux accents)
-  const filteredBySdr = search
+  const filteredBySdr = useMemo(() => search
     ? rdvs.filter(r => norm(r.sdr_name).includes(norm(search)))
-    : rdvs;
+    : rdvs, [rdvs, search]);
 
   // Stats globales
   const totalPris = rdvs.filter(r => r.crm_url_pris).length;

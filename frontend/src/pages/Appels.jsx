@@ -43,6 +43,7 @@ export default function Appels() {
   const [search, setSearch]       = useState('');
   const [autoSave, setAutoSave]   = useState(true);
   const [touched, setTouched]     = useState(new Set());
+  const [saveError, setSaveError] = useState('');
 
   const weeks = weeksOfMonth(selectedYear, selectedMonth);
   const currentWeek = isoWeekOf(now);
@@ -70,8 +71,14 @@ export default function Appels() {
     const k = key(sdrId, w);
     const val = parseInt(logs[k]) || 0;
     setSaving(p => ({ ...p, [k]: true }));
-    await api.saveCallLog(sdrId, w.week, w.year, val).catch(() => {});
-    setSaving(p => ({ ...p, [k]: false }));
+    setSaveError('');
+    try {
+      await api.saveCallLog(sdrId, w.week, w.year, val);
+    } catch (err) {
+      setSaveError(err.message || 'Erreur de sauvegarde');
+    } finally {
+      setSaving(p => ({ ...p, [k]: false }));
+    }
   };
 
   const saveAll = async () => {
@@ -172,6 +179,13 @@ export default function Appels() {
             </div>
           </div>
         </div>
+
+        {saveError && (
+          <div className="alert alert-danger" style={{ margin: '8px 16px', borderRadius: 6 }}>
+            Erreur de sauvegarde : {saveError}
+            <button onClick={() => setSaveError('')} style={{ marginLeft: 8, background: 'none', border: 'none', cursor: 'pointer', fontWeight: 700 }}>×</button>
+          </div>
+        )}
 
         {/* ── Tableau ── */}
         <div className="table-wrap">

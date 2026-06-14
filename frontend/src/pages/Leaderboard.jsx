@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { api } from '../api.js';
 import { useUser } from '../context/UserContext.jsx';
 import { safeUrl } from '../utils.js';
@@ -227,13 +227,13 @@ export default function Leaderboard() {
 
   const top3   = ranking.filter(r => r.rank <= 3);
   const isSdr  = user?.role === 'sdr';
-  const topAppels = !isSdr
+  const topAppels = useMemo(() => !isSdr
     ? [...ranking]
         .filter(r => r.total_appels > 0)
         .sort((a, b) => b.total_appels - a.total_appels)
         .slice(0, 3)
         .map((r, i) => ({ ...r, rank: i + 1 }))
-    : [];
+    : [], [ranking, isSdr]);
 
   return (
     <div className="page">
