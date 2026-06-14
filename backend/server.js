@@ -159,6 +159,10 @@ app.use((req, res, next) => {
   express.json({ limit: req.path === '/api/profile/avatar' ? '2mb' : '512kb' })(req, res, next);
 });
 app.use(cookieParser());
+app.use((req, _res, next) => {
+  if (req.ip?.startsWith('::ffff:')) req.ip = req.ip.slice(7);
+  next();
+});
 
 // Serve uploaded files
 const UPLOADS_DIR = process.env.DATA_DIR
