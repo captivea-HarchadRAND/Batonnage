@@ -190,62 +190,30 @@ async function verifyPassword(pw, stored) {
   return timingSafeEqual(buf, expected);
 }
 
-// ── Rate-limit en mémoire ─────────────────────────────────────────────────────
+// ── Rate-limit via express-rate-limit ────────────────────────────────────────
 const RL_WINDOW_MS = 15 * 60 * 1000; // 15 min
 
-function makeRateLimit(max, keyFn) {
-  const attempts = new Map();
-  return function (req, res, next) {
-    const key = keyFn(req);
-    const now = Date.now();
-    const rec = attempts.get(key);
-    if (rec && now - rec.first < RL_WINDOW_MS) {
-      if (rec.count >= max) {
-        const retry = Math.ceil((RL_WINDOW_MS - (now - rec.first)) / 1000);
-        res.set('Retry-After', String(retry));
-        return res.status(429).json({ error: `Trop de tentatives. Réessayez dans ${Math.ceil(retry / 60)} min.` });
-      }
-      rec.count++;
-    } else {
-      attempts.set(key, { count: 1, first: now });
-    }
-    if (attempts.size > 5000) {
-      for (const [k, v] of attempts) if (now - v.first > RL_WINDOW_MS) attempts.delete(k);
-    }
-    next();
-  };
-}
+const loginRateLimit = rateLimit({
+  windowMs: RL_WINDOW_MS,
+  max: 10,
+  keyGenerator: (req) => `${req.ip}|${(req.body?.email || '').toLowerCase().trim()}`,
+  handler: (_req, res) => res.status(429).json({ error: 'Trop de tentatives. Réessayez dans 15 min.' }),
+  standardHeaders: false,
+  legacyHeaders: false,
+});
 
-const loginAttempts = new Map();
-const RL_MAX = 10; // conservé pour clearLoginAttempts
-
-function loginRateLimit(req, res, next) {
-  const email = (req.body?.email || '').toLowerCase().trim();
-  const key = `${req.ip}|${email}`;
-  const now = Date.now();
-  const rec = loginAttempts.get(key);
-  if (rec && now - rec.first < RL_WINDOW_MS) {
-    if (rec.count >= RL_MAX) {
-      const retry = Math.ceil((RL_WINDOW_MS - (now - rec.first)) / 1000);
-      res.set('Retry-After', String(retry));
-      return res.status(429).json({ error: `Trop de tentatives. Réessayez dans ${Math.ceil(retry / 60)} min.` });
-    }
-    rec.count++;
-  } else {
-    loginAttempts.set(key, { count: 1, first: now });
-  }
-  if (loginAttempts.size > 5000) {
-    for (const [k, v] of loginAttempts) if (now - v.first > RL_WINDOW_MS) loginAttempts.delete(k);
-  }
-  next();
-}
-
-// 5 tentatives / 15 min par IP sur les endpoints d'invitation
-const inviteRateLimit = makeRateLimit(5, req => `invite|${req.ip}`);
+const inviteRateLimit = rateLimit({
+  windowMs: RL_WINDOW_MS,
+  max: 5,
+  keyGenerator: (req) => `invite|${req.ip}`,
+  handler: (_req, res) => res.status(429).json({ error: 'Trop de tentatives. Réessayez dans 15 min.' }),
+  standardHeaders: false,
+  legacyHeaders: false,
+});
 
 function clearLoginAttempts(req) {
   const email = (req.body?.email || '').toLowerCase().trim();
-  loginAttempts.delete(`${req.ip}|${email}`);
+  loginRateLimit.resetKey(`${req.ip}|${email}`);
 }
 
 // Options cookie de session — secure auto en production
