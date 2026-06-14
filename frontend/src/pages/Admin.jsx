@@ -87,6 +87,7 @@ function UserModal({ u, marches, me, onClose, onSaved, onDelete }) {
     objectif: u.objectif || 8,
   });
   const [loading, setLoading] = useState(false);
+  const [resetLoading, setResetLoading] = useState(false);
   const [error, setError] = useState('');
   const [confirmAction, setConfirmAction] = useState(null);
   const [resetPwForm, setResetPwForm] = useState(false);
@@ -198,17 +199,17 @@ function UserModal({ u, marches, me, onClose, onSaved, onDelete }) {
                   onChange={e => setNewPassword(e.target.value)}
                   style={{ flex: 1 }}
                 />
-                <button className="btn btn-primary btn-sm" disabled={loading} onClick={async () => {
-                  setLoading(true); setError('');
+                <button className="btn btn-primary btn-sm" disabled={resetLoading} onClick={async () => {
+                  setResetLoading(true); setError('');
                   try {
                     await api.resetUserPassword(u.id, newPassword);
-                    setResetSuccess(true);
                     setNewPassword('');
-                    setTimeout(() => { setResetPwForm(false); setResetSuccess(false); }, 2000);
+                    setResetPwForm(false);
+                    setResetSuccess(false);
                   } catch (err) { setError(err.message); }
-                  finally { setLoading(false); }
+                  finally { setResetLoading(false); }
                 }}>
-                  {loading ? <span className="spinner" /> : 'Valider'}
+                  {resetLoading ? <span className="spinner" /> : 'Valider'}
                 </button>
                 <button className="btn btn-ghost btn-sm" onClick={() => { setResetPwForm(false); setNewPassword(''); setResetSuccess(false); }}>
                   Annuler
