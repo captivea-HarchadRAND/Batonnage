@@ -285,9 +285,7 @@ async function logSecurityEvent(type, ip, userId, email, detail) {
       `INSERT INTO security_events (id, type, ip, user_id, email, detail) VALUES (?,?,?,?,?,?)`,
       [uuidv4(), type, ip || null, userId || null, email || null, detail || null]
     );
-    db.run(`DELETE FROM security_events WHERE id NOT IN (
-      SELECT id FROM security_events ORDER BY created_at DESC LIMIT 1000
-    )`);
+    db.run(`DELETE FROM security_events WHERE created_at < datetime('now', '-30 days')`);
     saveDB();
   } catch (e) {
     console.error('[logSecurityEvent]', e);
@@ -1912,7 +1910,8 @@ app.get('/api/admin/security', auth, requireRole('admin'), async (req, res) => {
       ip   = sep > 0 ? r.key.slice(0, sep) : r.key;
       email = sep > 0 ? r.key.slice(sep + 1) : null;
     }
-    return { ...r, reset_time: Number(r.reset_time), hits: Number(r.hits), type, ip, email };
+    const maxHits = type === 'login_global' ? 20 : type === 'invite' ? 5 : 10;
+    return { ...r, reset_time: Number(r.reset_time), hits: Number(r.hits), max: maxHits, blocked: Number(r.hits) >= maxHits, type, ip, email };
   });
 
   const events = dbRows(db,
@@ -1939,6 +1938,19 @@ app.delete('/api/admin/security/unblock', auth, requireRole('admin'), async (req
   saveDB();
   await logSecurityEvent('ip_unblocked', req.ip, req.user.id, null, `IP débloquée : ${ip}`);
   res.json({ ok: true, removed: before.length });
+});
+
+app.delete('/api/admin/security/events', auth, requireRole('admin'), async (req, res) => {
+  const { ids } = req.body;
+  const db = await getDB();
+  if (Array.isArray(ids) && ids.length > 0) {
+    const placeholders = ids.map(() => '?').join(',');
+    db.run(`DELETE FROM security_events WHERE id IN (${placeholders})`, ids);
+  } else {
+    db.run(`DELETE FROM security_events`);
+  }
+  saveDB();
+  res.json({ ok: true });
 });
 
 // ─── Admin: Create default admin on first run ─────────────────────────────────

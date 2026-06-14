@@ -1709,9 +1709,12 @@ function SecurityTab() {
   const [loading,    setLoading]    = useState(true);
   const [unblocking, setUnblocking] = useState(null);
   const [error,      setError]      = useState('');
+  const [selected,   setSelected]   = useState(new Set());
+  const [deleting,   setDeleting]   = useState(false);
 
   const load = useCallback(() => {
     setLoading(true);
+    setSelected(new Set());
     api.getSecurity()
       .then(setData)
       .catch(e => setError(e.message))
@@ -1723,49 +1726,95 @@ function SecurityTab() {
   const handleUnblock = async (ip) => {
     setUnblocking(ip);
     setError('');
-    try {
-      await api.unblockIp(ip);
-      load();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setUnblocking(null);
-    }
+    try { await api.unblockIp(ip); load(); }
+    catch (e) { setError(e.message); }
+    finally { setUnblocking(null); }
+  };
+
+  const handleDeleteEvents = async (ids) => {
+    if (!window.confirm(ids ? `Supprimer ${ids.length} événement(s) ?` : 'Supprimer tous les événements ?')) return;
+    setDeleting(true);
+    setError('');
+    try { await api.deleteSecurityEvents(ids); load(); }
+    catch (e) { setError(e.message); }
+    finally { setDeleting(false); }
+  };
+
+  const toggleSelect = (id) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAll = (events) => {
+    setSelected(prev => prev.size === events.length ? new Set() : new Set(events.map(e => e.id)));
   };
 
   if (loading) return <div style={{ padding: 24, color: 'var(--text-muted)' }}>Chargement…</div>;
 
   const { blocked = [], events = [] } = data || {};
+  const blockedOnly = blocked.filter(b => b.blocked);
+  const watching    = blocked.filter(b => !b.blocked);
 
   return (
     <div style={{ padding: 24 }}>
       {error && <div className="alert alert-error" style={{ marginBottom: 16 }}>{error}</div>}
 
-      {/* IPs bloquées */}
+      {/* IPs surveillées */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1 }}>
-          🔒 IPs bloquées ({blocked.length})
+          👁 Tentatives actives ({watching.length})
         </div>
         <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={load}>↻ Actualiser</button>
       </div>
 
-      {blocked.length === 0 ? (
+      {watching.length === 0 ? (
+        <div className="text-muted text-sm" style={{ marginBottom: 32, padding: '12px 0' }}>Aucune tentative en cours.</div>
+      ) : (
+        <div className="table-wrap" style={{ marginBottom: 32 }}>
+          <table className="admin-table">
+            <thead><tr><th>IP</th><th>Type</th><th>Email</th><th style={{ textAlign: 'center' }}>Tentatives</th><th>Expire dans</th></tr></thead>
+            <tbody>
+              {watching.map(b => {
+                const remaining = Math.max(0, Math.ceil((b.reset_time - Date.now()) / 60000));
+                const pct = Math.round((b.hits / b.max) * 100);
+                return (
+                  <tr key={b.key}>
+                    <td><code style={{ fontSize: 12 }}>{b.ip}</code></td>
+                    <td className="text-sm">{BLOCK_TYPE_LABELS[b.type] || b.type}</td>
+                    <td className="text-sm text-muted">{b.email || '—'}</td>
+                    <td style={{ textAlign: 'center' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'center' }}>
+                        <div style={{ width: 60, height: 6, background: 'var(--border)', borderRadius: 3, overflow: 'hidden' }}>
+                          <div style={{ width: `${pct}%`, height: '100%', background: pct >= 70 ? '#f59e0b' : '#3b82f6', borderRadius: 3 }} />
+                        </div>
+                        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{b.hits}/{b.max}</span>
+                      </div>
+                    </td>
+                    <td className="text-sm text-muted">{remaining > 0 ? `${remaining} min` : 'expiré'}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* IPs vraiment bloquées */}
+      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>
+        🔒 IPs bloquées ({blockedOnly.length})
+      </div>
+
+      {blockedOnly.length === 0 ? (
         <div className="text-muted text-sm" style={{ marginBottom: 32, padding: '12px 0' }}>Aucune IP actuellement bloquée.</div>
       ) : (
         <div className="table-wrap" style={{ marginBottom: 32 }}>
           <table className="admin-table">
-            <thead>
-              <tr>
-                <th>IP</th>
-                <th>Type</th>
-                <th>Email</th>
-                <th style={{ textAlign: 'center' }}>Tentatives</th>
-                <th>Expire dans</th>
-                <th></th>
-              </tr>
-            </thead>
+            <thead><tr><th>IP</th><th>Type</th><th>Email</th><th style={{ textAlign: 'center' }}>Tentatives</th><th>Expire dans</th><th></th></tr></thead>
             <tbody>
-              {blocked.map(b => {
+              {blockedOnly.map(b => {
                 const remaining = Math.max(0, Math.ceil((b.reset_time - Date.now()) / 60000));
                 return (
                   <tr key={b.key}>
@@ -1774,17 +1823,13 @@ function SecurityTab() {
                     <td className="text-sm text-muted">{b.email || '—'}</td>
                     <td style={{ textAlign: 'center' }}>
                       <span style={{ background: '#ef4444', color: '#fff', borderRadius: 4, padding: '2px 8px', fontSize: 12, fontWeight: 700 }}>
-                        {b.hits}
+                        {b.hits}/{b.max}
                       </span>
                     </td>
                     <td className="text-sm text-muted">{remaining > 0 ? `${remaining} min` : 'expiré'}</td>
                     <td>
-                      <button
-                        className="btn btn-ghost"
-                        style={{ fontSize: 12, padding: '4px 10px' }}
-                        disabled={unblocking === b.ip}
-                        onClick={() => handleUnblock(b.ip)}
-                      >
+                      <button className="btn btn-ghost" style={{ fontSize: 12, padding: '4px 10px' }}
+                        disabled={unblocking === b.ip} onClick={() => handleUnblock(b.ip)}>
                         {unblocking === b.ip ? '…' : '🔓 Débloquer'}
                       </button>
                     </td>
@@ -1797,8 +1842,24 @@ function SecurityTab() {
       )}
 
       {/* Événements récents */}
-      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>
-        📋 Événements récents ({events.length})
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1 }}>
+          📋 Événements récents ({events.length})
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {selected.size > 0 && (
+            <button className="btn btn-ghost" style={{ fontSize: 12, color: '#ef4444' }}
+              disabled={deleting} onClick={() => handleDeleteEvents([...selected])}>
+              🗑 Supprimer ({selected.size})
+            </button>
+          )}
+          {events.length > 0 && (
+            <button className="btn btn-ghost" style={{ fontSize: 12, color: '#ef4444' }}
+              disabled={deleting} onClick={() => handleDeleteEvents(null)}>
+              🗑 Tout supprimer
+            </button>
+          )}
+        </div>
       </div>
 
       {events.length === 0 ? (
@@ -1808,6 +1869,10 @@ function SecurityTab() {
           <table className="admin-table">
             <thead>
               <tr>
+                <th style={{ width: 32 }}>
+                  <input type="checkbox" checked={selected.size === events.length && events.length > 0}
+                    onChange={() => toggleAll(events)} />
+                </th>
                 <th>Horodatage</th>
                 <th>Type</th>
                 <th>IP</th>
@@ -1819,7 +1884,8 @@ function SecurityTab() {
               {events.map(ev => {
                 const meta = EVENT_META[ev.type] || { label: ev.type, color: 'var(--text-muted)', icon: '•' };
                 return (
-                  <tr key={ev.id}>
+                  <tr key={ev.id} style={{ background: selected.has(ev.id) ? 'var(--surface-hover, rgba(99,102,241,.08))' : undefined }}>
+                    <td><input type="checkbox" checked={selected.has(ev.id)} onChange={() => toggleSelect(ev.id)} /></td>
                     <td className="text-sm text-muted" style={{ whiteSpace: 'nowrap' }}>
                       {new Date(ev.created_at).toLocaleString('fr-FR')}
                     </td>

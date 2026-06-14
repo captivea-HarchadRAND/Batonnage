@@ -121,4 +121,5 @@ export const api = {
   // Sécurité
   getSecurity: () => request('GET', '/admin/security'),
   unblockIp: (ip) => request('DELETE', '/admin/security/unblock', { ip }),
+  deleteSecurityEvents: (ids) => request('DELETE', '/admin/security/events', ids?.length ? { ids } : {}),
 };
