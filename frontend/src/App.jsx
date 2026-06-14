@@ -34,7 +34,7 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
-      <Route path="/invite/:token" element={<AcceptInvite />} />
+      <Route path="/invite/:token" element={<PublicRoute><AcceptInvite /></PublicRoute>} />
 
       <Route element={<PrivateRoute><Layout /></PrivateRoute>}>
         <Route index element={<Dashboard />} />
