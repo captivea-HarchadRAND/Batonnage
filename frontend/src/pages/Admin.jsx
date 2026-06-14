@@ -278,7 +278,7 @@ function UsersTab({ marches }) {
     api.getUsers().then(setUsers).finally(() => setLoading(false));
   }, []);
 
-  useEffect(() => { setSelected(new Set()); setBulkConfirm(false); setBulkDisableConfirm(false); setBulkReactivateConfirm(false); }, [statusFilter]);
+  useEffect(() => { setSelected(new Set()); setBulkConfirm(false); setBulkDisableConfirm(false); setBulkReactivateConfirm(false); setError(''); }, [statusFilter]);
 
   const set = (f) => (e) => setForm(prev => ({ ...prev, [f]: e.target.value }));
 

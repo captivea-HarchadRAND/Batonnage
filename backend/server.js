@@ -135,7 +135,7 @@ function validatePassword(pw) {
 const AZURE_CLIENT_ID     = process.env.AZURE_CLIENT_ID || '';
 const AZURE_TENANT_ID     = process.env.AZURE_TENANT_ID || 'common';
 const AZURE_CLIENT_SECRET = process.env.AZURE_CLIENT_SECRET || '';
-const APP_URL             = process.env.APP_URL || 'http://localhost:8080';
+const APP_URL = (process.env.APP_URL || 'https://batonnage.captivea.mg').replace(/\/$/, '');
 
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors({
@@ -684,6 +684,8 @@ app.put('/api/rdvs/:id', auth, async (req, res) => {
     const { crm_url_pris, date_pris, date_prevue, crm_url_done, date_done, notes, marche_id, status: bodyStatus } = req.body;
     if (!isSafeCrmUrl(crm_url_pris) || !isSafeCrmUrl(crm_url_done))
       return res.status(400).json({ error: 'URL CRM invalide (doit commencer par http:// ou https://)' });
+    if (marche_id !== undefined && !isValidUUID(marche_id))
+      return res.status(400).json({ error: 'marche_id invalide' });
     // Un SDR ne peut pas déplacer un RDV vers un marché qui n'est pas le sien
     if (req.user.role === 'sdr' && marche_id != null && marche_id !== rdv.marche_id && !sdrHasMarche(db, req.user.id, marche_id))
       return res.status(403).json({ error: 'Marché non autorisé' });
@@ -1872,11 +1874,16 @@ async function fixISOWeeks() {
 async function reconcileDefaultMarches() {
   const db = await getDB();
   const users = dbRows(db, `SELECT id, name, marche_id FROM users WHERE marche_id IS NOT NULL`);
+  const allAssigns = dbRows(db,
+    `SELECT um.user_id, um.marche_id, m.archived FROM user_marches um JOIN marches m ON m.id = um.marche_id`);
+  const assignsByUser = {};
+  allAssigns.forEach(a => {
+    if (!assignsByUser[a.user_id]) assignsByUser[a.user_id] = [];
+    assignsByUser[a.user_id].push(a);
+  });
   let fixed = 0;
   users.forEach(u => {
-    const assigns = dbRows(db,
-      `SELECT um.marche_id, m.archived FROM user_marches um JOIN marches m ON m.id = um.marche_id WHERE um.user_id=?`,
-      [u.id]);
+    const assigns = assignsByUser[u.id] || [];
     if (assigns.length === 0) {
       // Défaut sans aucune affectation → le défaut devient l'affectation.
       db.run(`INSERT OR IGNORE INTO user_marches (user_id, marche_id) VALUES (?,?)`, [u.id, u.marche_id]);

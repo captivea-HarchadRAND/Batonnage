@@ -14,6 +14,12 @@ export default function BadgeReveal({ badges, bellRef, onDone }) {
   const [phase, setPhase]       = useState('intro');   // intro → fly → done
   const [idx, setIdx]           = useState(0);
   const medalRef                = useRef(null);
+  const mountedRef              = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
   const badge                   = badges[idx];
   const cfg                     = RANK_CFG[badge?.rank] || RANK_CFG[3];
 
@@ -53,7 +59,7 @@ export default function BadgeReveal({ badges, bellRef, onDone }) {
       el.style.transform = 'rotate(720deg)';
     }));
 
-    setTimeout(() => { el.remove(); setPhase('done'); onDone(); }, 800);
+    setTimeout(() => { el.remove(); if (mountedRef.current) { setPhase('done'); onDone(); } }, 800);
   };
 
   if (phase === 'done' || !badge) return null;

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { api } from '../api.js';
 
 function isoWeekOf(d) {
@@ -94,7 +94,7 @@ export default function Appels() {
   };
 
   const norm = s => (s ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  const filteredSdrs = sdrs.filter(s => norm(s.name).includes(norm(search)));
+  const filteredSdrs = useMemo(() => sdrs.filter(s => norm(s.name).includes(norm(search))), [sdrs, search]);
 
   if (loading) return <div className="page"><div className="spinner" /></div>;
 

@@ -69,6 +69,8 @@ export default function SuiviProblemes() {
     try {
       await api.updateCallIssueStatus(issue.id, newStatus);
       setIssues(prev => prev.filter(i => i.id !== issue.id));
+    } catch (err) {
+      alert(`Erreur : ${err.message}`);
     } finally { setAction(issue.id, null); }
   };
 
@@ -77,6 +79,8 @@ export default function SuiviProblemes() {
     try {
       await api.deleteCallIssue(id);
       setIssues(prev => prev.filter(i => i.id !== id));
+    } catch (err) {
+      alert(`Erreur : ${err.message}`);
     } finally {
       setAction(id, null);
       setConfirmDelete(null);
