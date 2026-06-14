@@ -36,7 +36,7 @@ const ALLOWED_ORIGINS = [
   'http://localhost:5174',
   'http://localhost:8080',
 ];
-const SESSION_TTL_DAYS = 30;
+const SESSION_TTL_DAYS = 14;
 const INVITE_TTL_DAYS = 7;
 const MIN_PASSWORD_LEN = 12;
 // const APP_URL = (process.env.APP_URL || 'https://batonnage.captivea.mg').replace(/\/$/, '');
@@ -137,7 +137,19 @@ const AZURE_TENANT_ID     = process.env.AZURE_TENANT_ID || 'common';
 const AZURE_CLIENT_SECRET = process.env.AZURE_CLIENT_SECRET || '';
 const APP_URL = (process.env.APP_URL || 'https://batonnage.captivea.mg').replace(/\/$/, '');
 
-app.use(helmet({ contentSecurityPolicy: false }));
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc:  ["'self'"],
+      styleSrc:   ["'self'", "'unsafe-inline'"],
+      imgSrc:     ["'self'", "data:"],
+      connectSrc: ["'self'"],
+      fontSrc:    ["'self'"],
+      frameAncestors: ["'none'"],
+    }
+  }
+}));
 app.use(cors({
   origin: ALLOWED_ORIGINS,
   credentials: true,
@@ -632,6 +644,7 @@ app.post('/api/rdvs', auth, async (req, res) => {
 
     const targetSdr = (req.user.role === 'sdr') ? req.user.id : (sdr_id || req.user.id);
     if (!marche_id) return res.status(400).json({ error: 'Marché requis' });
+    if (!isValidUUID(marche_id)) return res.status(400).json({ error: 'marche_id invalide' });
     const isAdmin = ['admin','manager'].includes(req.user.role);
     if (!isAdmin && !crm_url_pris && !crm_url_done) return res.status(400).json({ error: 'Au moins une URL CRM requise' });
     if (!isSafeCrmUrl(crm_url_pris) || !isSafeCrmUrl(crm_url_done))
@@ -1781,11 +1794,16 @@ app.get('/api/admin/performance', auth, requireRole('manager', 'admin'), async (
 
 // ─── Settings ─────────────────────────────────────────────────────────────────
 
+const PUBLIC_SETTINGS = new Set(['leaderboard_period_filter', 'app_name']);
+
 app.get('/api/settings', auth, async (req, res) => {
   const db = await getDB();
   const rows = dbRows(db, `SELECT key, value FROM settings`);
-  const settings = Object.fromEntries(rows.map(r => [r.key, r.value]));
-  res.json(settings);
+  const all = Object.fromEntries(rows.map(r => [r.key, r.value]));
+  if (req.user.role === 'sdr') {
+    return res.json(Object.fromEntries(Object.entries(all).filter(([k]) => PUBLIC_SETTINGS.has(k))));
+  }
+  res.json(all);
 });
 
 const ALLOWED_SETTINGS = new Set(['leaderboard_period_filter']);

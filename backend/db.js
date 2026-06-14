@@ -196,6 +196,18 @@ function migrate(db) {
 
     // v17: expiration des tokens d'invitation
     `ALTER TABLE users ADD COLUMN invite_expires TEXT;`,
+
+    // v18: index sur les colonnes filtrées fréquemment (performances requêtes)
+    `CREATE INDEX IF NOT EXISTS idx_rdvs_sdr      ON rdvs(sdr_id);
+     CREATE INDEX IF NOT EXISTS idx_rdvs_marche   ON rdvs(marche_id);
+     CREATE INDEX IF NOT EXISTS idx_rdvs_week     ON rdvs(semaine, annee);
+     CREATE INDEX IF NOT EXISTS idx_rdvs_date_pris ON rdvs(date_pris);
+     CREATE INDEX IF NOT EXISTS idx_rdvs_date_done ON rdvs(date_done);
+     CREATE INDEX IF NOT EXISTS idx_rdvs_status   ON rdvs(status);
+     CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+     CREATE INDEX IF NOT EXISTS idx_call_logs_sdr ON call_logs(sdr_id);
+     CREATE INDEX IF NOT EXISTS idx_badges_user   ON badges(user_id);
+     CREATE INDEX IF NOT EXISTS idx_call_issues_sdr ON call_issues(sdr_id);`,
   ];
 
   for (let i = current; i < migrations.length; i++) {
