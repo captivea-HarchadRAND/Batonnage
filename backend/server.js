@@ -2,6 +2,7 @@ const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
+const rateLimit = require('express-rate-limit');
 const { v4: uuidv4 } = require('uuid');
 const { scrypt, randomBytes, timingSafeEqual } = require('crypto');
 const { promisify } = require('util');
@@ -511,6 +512,7 @@ app.post('/api/call-issue-types', auth, requireRole('manager', 'admin'), async (
 });
 
 app.delete('/api/call-issue-types/:id', auth, requireRole('manager', 'admin'), async (req, res) => {
+  if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'ID invalide' });
   const db = await getDB();
   db.run(`DELETE FROM call_issue_types WHERE id=?`, [req.params.id]);
   saveDB();
@@ -561,6 +563,7 @@ app.get('/api/call-issues', auth, async (req, res) => {
 });
 
 app.put('/api/call-issues/:id/status', auth, requireRole('manager', 'admin'), async (req, res) => {
+  if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'ID invalide' });
   const { status } = req.body;
   if (!['open', 'dismissed', 'archived'].includes(status))
     return res.status(400).json({ error: 'Statut invalide' });
@@ -571,6 +574,7 @@ app.put('/api/call-issues/:id/status', auth, requireRole('manager', 'admin'), as
 });
 
 app.delete('/api/call-issues/:id', auth, requireRole('manager', 'admin'), async (req, res) => {
+  if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'ID invalide' });
   const db = await getDB();
   db.run(`DELETE FROM call_issues WHERE id=?`, [req.params.id]);
   saveDB();
@@ -1553,6 +1557,7 @@ app.post('/api/admin/marches', auth, requireRole('admin'), async (req, res) => {
 });
 
 app.put('/api/admin/marches/:id', auth, requireRole('admin'), async (req, res) => {
+  if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'ID invalide' });
   const { name, code, color, position } = req.body;
   const db = await getDB();
   db.run(
@@ -1575,6 +1580,7 @@ app.patch('/api/admin/marches/:id/archive', auth, requireRole('admin'), async (r
 });
 
 app.patch('/api/admin/marches/:id/unarchive', auth, requireRole('admin'), async (req, res) => {
+  if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'ID invalide' });
   const db = await getDB();
   db.run(`UPDATE marches SET archived=0 WHERE id=?`, [req.params.id]);
   saveDB();
@@ -1606,6 +1612,7 @@ app.get('/api/admin/objectifs', auth, requireRole('manager', 'admin'), async (re
 });
 
 app.put('/api/admin/objectifs/:sdr_id', auth, requireRole('manager', 'admin'), async (req, res) => {
+  if (!isValidUUID(req.params.sdr_id)) return res.status(400).json({ error: 'ID SDR invalide' });
   const { objectif_rdv_done } = req.body;
   if (objectif_rdv_done === undefined) return res.status(400).json({ error: 'Objectif requis' });
   const val = Math.max(1, Math.min(500, parseInt(objectif_rdv_done, 10) || 1));
