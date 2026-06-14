@@ -509,6 +509,7 @@ app.delete('/api/call-issue-types/:id', auth, requireRole('manager', 'admin'), a
 app.post('/api/call-issues', auth, async (req, res) => {
   const { sdr_id, marche_id, issue_type, date, notes } = req.body;
   if (!issue_type) return res.status(400).json({ error: 'Type de problème requis' });
+  if (sdr_id && !isValidUUID(sdr_id)) return res.status(400).json({ error: 'ID SDR invalide' });
   const targetSdr = req.user.role === 'sdr' ? req.user.id : (sdr_id || req.user.id);
   const db = await getDB();
   const id = uuidv4();
@@ -743,6 +744,7 @@ app.post('/api/rdvs/bulk-delete', auth, requireRole('manager', 'admin'), async (
 app.post('/api/rdvs/bulk-done', auth, async (req, res) => {
   const { ids, date_done } = req.body;
   if (!Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'IDs requis' });
+  if (date_done && !isValidDate(date_done)) return res.status(400).json({ error: 'Date invalide' });
   const safeIds = ids.filter(isValidUUID);
   if (!safeIds.length) return res.json({ ok: true, count: 0 });
   const db = await getDB();
@@ -1040,6 +1042,7 @@ app.put('/api/profile/badges/seen', auth, async (req, res) => {
 });
 
 app.put('/api/profile/badges/:id/seen', auth, async (req, res) => {
+  if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'ID invalide' });
   const db = await getDB();
   db.run(`UPDATE badges SET seen=1 WHERE id=? AND user_id=?`, [req.params.id, req.user.id]);
   saveDB();
@@ -1048,6 +1051,7 @@ app.put('/api/profile/badges/:id/seen', auth, async (req, res) => {
 
 // Dismiss une notif (cache des notifications, badge conservé dans le profil)
 app.delete('/api/profile/badges/:id', auth, async (req, res) => {
+  if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'ID invalide' });
   const db = await getDB();
   db.run(`UPDATE badges SET dismissed=1, seen=1 WHERE id=? AND user_id=?`, [req.params.id, req.user.id]);
   saveDB();
@@ -1068,6 +1072,7 @@ app.get('/api/admin/call-logs', auth, requireRole('manager', 'admin'), async (re
 
 app.put('/api/admin/call-logs/:sdr_id/:semaine/:annee', auth, requireRole('manager', 'admin'), async (req, res) => {
   const { sdr_id } = req.params;
+  if (!isValidUUID(sdr_id)) return res.status(400).json({ error: 'ID SDR invalide' });
   const iSemaine = parseInt(req.params.semaine, 10);
   const iAnnee   = parseInt(req.params.annee, 10);
   if (!Number.isInteger(iSemaine) || iSemaine < 1 || iSemaine > 53)
@@ -1351,6 +1356,7 @@ app.put('/api/admin/users/:id/reset-password', auth, requireRole('manager', 'adm
     return res.status(403).json({ error: 'Seul un admin peut réinitialiser le mot de passe d\'un admin.' });
   const hash = await hashPassword(password);
   db.run(`UPDATE users SET password_hash=? WHERE id=?`, [hash, req.params.id]);
+  db.run(`DELETE FROM sessions WHERE user_id=?`, [req.params.id]);
   saveDB();
   res.json({ ok: true });
 });
@@ -1467,6 +1473,7 @@ app.delete('/api/admin/users/:id', auth, requireRole('admin'), async (req, res) 
 // Assigner un utilisateur à un marché
 app.post('/api/admin/users/:id/marches/:marche_id', auth, requireRole('manager', 'admin'), async (req, res) => {
   const { id, marche_id } = req.params;
+  if (!isValidUUID(id) || !isValidUUID(marche_id)) return res.status(400).json({ error: 'ID invalide' });
   const db = await getDB();
   db.run(`INSERT OR IGNORE INTO user_marches (user_id, marche_id) VALUES (?,?)`, [id, marche_id]);
   // Définir comme marché primaire si l'utilisateur n'en a pas encore
@@ -1479,6 +1486,7 @@ app.post('/api/admin/users/:id/marches/:marche_id', auth, requireRole('manager',
 // Retirer un utilisateur d'un marché
 app.delete('/api/admin/users/:id/marches/:marche_id', auth, requireRole('manager', 'admin'), async (req, res) => {
   const { id, marche_id } = req.params;
+  if (!isValidUUID(id) || !isValidUUID(marche_id)) return res.status(400).json({ error: 'ID invalide' });
   const db = await getDB();
   db.run(`DELETE FROM user_marches WHERE user_id=? AND marche_id=?`, [id, marche_id]);
   // Si c'était le marché primaire, mettre à jour vers un autre marché ou null
@@ -1502,6 +1510,7 @@ app.get('/api/admin/marches', auth, requireRole('manager', 'admin'), async (req,
 app.post('/api/admin/marches', auth, requireRole('admin'), async (req, res) => {
   const { name, code, color } = req.body;
   if (!name || !code) return res.status(400).json({ error: 'Nom et code requis' });
+  if (typeof code !== 'string' || code.length > 10) return res.status(400).json({ error: 'Code trop long (max 10 caractères)' });
   const db = await getDB();
   const maxPos = dbRow(db, `SELECT MAX(position) as p FROM marches`)?.p ?? 0;
   const id = uuidv4();
