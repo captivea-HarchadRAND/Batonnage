@@ -7,6 +7,7 @@ const { scrypt, randomBytes, timingSafeEqual } = require('crypto');
 const { promisify } = require('util');
 const path = require('path');
 const fs = require('fs');
+const nodemailer = require('nodemailer');
 const { getDB, saveDB } = require('./db');
 
 // Load .env if present
@@ -36,8 +37,105 @@ const ALLOWED_ORIGINS = [
   'http://localhost:8080',
 ];
 const SESSION_TTL_DAYS = 30;
-const INVITE_TTL_DAYS = 7;       // durée de validité d'une invitation
+const INVITE_TTL_DAYS = 7;
 const MIN_PASSWORD_LEN = 12;
+const APP_URL = (process.env.APP_URL || 'https://batonnage.captivea.mg').replace(/\/$/, '');
+
+// ─── Mailer ───────────────────────────────────────────────────────────────────
+let _transporter = null;
+function getMailer() {
+  if (_transporter) return _transporter;
+  const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
+  if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) return null;
+  _transporter = nodemailer.createTransport({
+    host: SMTP_HOST,
+    port: parseInt(SMTP_PORT || '587', 10),
+    secure: process.env.SMTP_SECURE === 'true',
+    auth: { user: SMTP_USER, pass: SMTP_PASS },
+  });
+  return _transporter;
+}
+
+async function sendInviteEmail(name, email, token) {
+  const mailer = getMailer();
+  if (!mailer) return;
+  const from = process.env.SMTP_FROM || `Batonnage <noreply@captivea.mg>`;
+  const link = `${APP_URL}/invite/${token}`;
+  const html = `<!DOCTYPE html>
+<html lang="fr">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#0d1117;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0d1117;padding:40px 16px">
+    <tr><td align="center">
+      <table width="520" cellpadding="0" cellspacing="0" style="background:#161b22;border:1px solid #30363d;border-radius:12px;overflow:hidden;max-width:520px;width:100%">
+
+        <!-- Header -->
+        <tr>
+          <td style="background:linear-gradient(135deg,#1a2a4a 0%,#0d1b35 100%);padding:36px 40px;text-align:center">
+            <div style="display:inline-flex;align-items:center;justify-content:center;width:56px;height:56px;background:#2563eb;border-radius:14px;margin-bottom:16px">
+              <span style="color:#fff;font-size:24px;font-weight:900;letter-spacing:-1px">|||</span>
+            </div>
+            <h1 style="margin:0;color:#e6edf3;font-size:22px;font-weight:700;letter-spacing:-0.5px">Batonnage</h1>
+            <p style="margin:6px 0 0;color:#8b949e;font-size:13px">Suivi des RDVs SDR</p>
+          </td>
+        </tr>
+
+        <!-- Body -->
+        <tr>
+          <td style="padding:36px 40px">
+            <p style="margin:0 0 8px;color:#8b949e;font-size:13px;text-transform:uppercase;letter-spacing:0.8px;font-weight:600">Invitation</p>
+            <h2 style="margin:0 0 16px;color:#e6edf3;font-size:20px;font-weight:600">Bienvenue, ${name}&nbsp;!</h2>
+            <p style="margin:0 0 28px;color:#8b949e;font-size:15px;line-height:1.6">
+              Vous avez été invité(e) à rejoindre <strong style="color:#c9d1d9">Batonnage</strong>.<br>
+              Cliquez sur le bouton ci-dessous pour créer votre mot de passe et activer votre compte.
+            </p>
+
+            <!-- CTA -->
+            <table width="100%" cellpadding="0" cellspacing="0">
+              <tr><td align="center" style="padding:0 0 28px">
+                <a href="${link}" style="display:inline-block;background:#2563eb;color:#fff;text-decoration:none;font-size:15px;font-weight:600;padding:14px 36px;border-radius:8px;letter-spacing:0.2px">
+                  Créer mon compte →
+                </a>
+              </td></tr>
+            </table>
+
+            <!-- Link fallback -->
+            <div style="background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:14px 16px;margin-bottom:24px">
+              <p style="margin:0 0 6px;color:#8b949e;font-size:12px">Ou copiez ce lien dans votre navigateur :</p>
+              <p style="margin:0;color:#58a6ff;font-size:12px;word-break:break-all">${link}</p>
+            </div>
+
+            <!-- Expiry -->
+            <p style="margin:0;color:#6e7681;font-size:13px;text-align:center">
+              ⏳ Ce lien est valable <strong style="color:#8b949e">${INVITE_TTL_DAYS} jours</strong>.
+            </p>
+          </td>
+        </tr>
+
+        <!-- Footer -->
+        <tr>
+          <td style="background:#0d1117;border-top:1px solid #21262d;padding:20px 40px;text-align:center">
+            <p style="margin:0;color:#6e7681;font-size:12px">
+              Vous recevez cet email car un administrateur vous a invité(e).<br>
+              Si vous n'attendiez pas cette invitation, ignorez ce message.
+            </p>
+          </td>
+        </tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+
+  await mailer.sendMail({
+    from,
+    to: email,
+    subject: `Invitation à rejoindre Batonnage`,
+    html,
+    text: `Bonjour ${name},\n\nVous avez été invité(e) à rejoindre Batonnage.\nActivez votre compte ici : ${link}\n\nCe lien expire dans ${INVITE_TTL_DAYS} jours.`,
+  });
+}
 
 function validatePassword(pw) {
   if (!pw || pw.length < MIN_PASSWORD_LEN) return `Minimum ${MIN_PASSWORD_LEN} caractères requis.`;
@@ -1186,7 +1284,34 @@ app.post('/api/admin/users', auth, requireRole('manager', 'admin'), async (req, 
   saveDB();
 
   const user = dbRow(db, `SELECT id, name, email, role, marche_id, status FROM users WHERE id=?`, [id]);
+
+  if (inviteToken) {
+    sendInviteEmail(name, email.toLowerCase(), inviteToken).catch(err =>
+      console.error('[invite email]', err.message)
+    );
+  }
+
   res.status(201).json({ user, invite_token: inviteToken });
+});
+
+app.post('/api/admin/users/:id/resend-invite', auth, requireRole('manager', 'admin'), async (req, res) => {
+  try {
+    const db = await getDB();
+    const user = dbRow(db, `SELECT id, name, email, status FROM users WHERE id=?`, [req.params.id]);
+    if (!user) return res.status(404).json({ error: 'Utilisateur introuvable' });
+    if (user.status !== 'pending') return res.status(400).json({ error: 'Cet utilisateur a déjà activé son compte' });
+
+    const token = uuidv4();
+    const expires = new Date(Date.now() + INVITE_TTL_DAYS * 86400000).toISOString();
+    db.run(`UPDATE users SET invite_token=?, invite_expires=? WHERE id=?`, [token, expires, user.id]);
+    saveDB();
+
+    await sendInviteEmail(user.name, user.email, token);
+    res.json({ ok: true, invite_token: token });
+  } catch (err) {
+    console.error('[resend-invite]', err);
+    res.status(500).json({ error: err.message || 'Erreur envoi email' });
+  }
 });
 
 app.put('/api/admin/users/:id', auth, requireRole('manager', 'admin'), async (req, res) => {

@@ -263,6 +263,8 @@ function UsersTab({ marches }) {
   const [form, setForm] = useState({ name: '', email: '', role: 'sdr', marche_id: '', password: '' });
   const [error, setError] = useState('');
   const [inviteLink, setInviteLink] = useState('');
+  const [resendingId, setResendingId] = useState(null);
+  const [resendMsg, setResendMsg] = useState('');
   const [selectedUser, setSelectedUser] = useState(null);
   const [statusFilter, setStatusFilter] = useState('all');
   const [selected, setSelected] = useState(new Set());
@@ -382,9 +384,18 @@ function UsersTab({ marches }) {
       </div>
 
       {inviteLink && (
-        <div className="alert alert-success" style={{ marginBottom: 16 }}>
-          Lien d'invitation : <a href={inviteLink} target="_blank" rel="noopener noreferrer">{inviteLink}</a>
+        <div className="alert alert-success" style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            ✉️ Invitation envoyée — <a href={inviteLink} target="_blank" rel="noopener noreferrer" style={{ wordBreak: 'break-all' }}>{inviteLink}</a>
+          </span>
+          <button className="btn btn-sm" style={{ flexShrink: 0 }}
+            onClick={() => { navigator.clipboard.writeText(inviteLink); }}>
+            Copier
+          </button>
         </div>
+      )}
+      {resendMsg && (
+        <div className="alert alert-success" style={{ marginBottom: 16 }}>{resendMsg}</div>
       )}
 
       {selected.size > 0 && (
@@ -512,10 +523,31 @@ function UsersTab({ marches }) {
                     </div>
                   ) : <span className="text-muted">—</span>}
                 </td>
-                <td>
+                <td style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span className={`badge ${u.status === 'active' ? 'badge-green' : u.status === 'pending' ? 'badge-yellow' : 'badge-gray'}`}>
                     {u.status === 'active' ? '● Actif' : u.status === 'pending' ? '⏳ En attente' : '○ Désactivé'}
                   </span>
+                  {u.status === 'pending' && (
+                    <button className="btn btn-sm" disabled={resendingId === u.id}
+                      style={{ fontSize: 11, padding: '2px 8px', opacity: resendingId === u.id ? 0.6 : 1 }}
+                      onClick={async () => {
+                        setResendingId(u.id);
+                        setResendMsg('');
+                        try {
+                          const { invite_token } = await api.resendInvite(u.id);
+                          const link = `${window.location.origin}/invite/${invite_token}`;
+                          setInviteLink(link);
+                          setResendMsg(`✉️ Invitation renvoyée à ${u.email}`);
+                          setTimeout(() => setResendMsg(''), 5000);
+                        } catch (e) {
+                          setResendMsg(`Erreur : ${e.message}`);
+                        } finally {
+                          setResendingId(null);
+                        }
+                      }}>
+                      {resendingId === u.id ? '…' : '↩ Renvoyer'}
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
