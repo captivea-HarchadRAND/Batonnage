@@ -32,10 +32,10 @@ export default function Dashboard() {
   useEffect(() => {
     Promise.all([
       api.getStats(),
-      api.getRdvs(),
+      api.getRdvs({ limit: 8 }),
     ]).then(([s, rdvs]) => {
       setStats(s);
-      setRecentRdvs(rdvs.slice(0, 8));
+      setRecentRdvs(rdvs);
     }).finally(() => setLoading(false));
   }, []);
 

@@ -806,11 +806,10 @@ app.get('/api/synthesis', auth, requireRole('manager', 'admin'), async (req, res
        SUM(CASE WHEN r.status='done' AND COALESCE(r.archived,0)=0 ${doneFilter} THEN 1 ELSE 0 END) as rdv_done,
        COALESCE(o.objectif_rdv_done, 8) as objectif
      FROM users u
-     JOIN user_marches um ON um.user_id = u.id
-     JOIN marches m ON m.id = um.marche_id AND m.archived = 0
-     LEFT JOIN rdvs r ON r.sdr_id = u.id AND r.marche_id = m.id
+     JOIN marches m ON m.id = u.marche_id AND m.archived = 0
+     LEFT JOIN rdvs r ON r.sdr_id = u.id
      LEFT JOIN objectifs o ON o.sdr_id = u.id
-     WHERE u.status='active' AND u.role='sdr'
+     WHERE u.status='active' AND u.role='sdr' AND u.marche_id IS NOT NULL
      GROUP BY u.id, u.name, u.email, m.id, m.name, m.color
      ORDER BY m.position, m.name, u.name`,
     params);
