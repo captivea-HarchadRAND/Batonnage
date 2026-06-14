@@ -254,7 +254,7 @@ export default function Profile() {
         </div>
 
         {/* Infos */}
-        <div className="card" style={{ flex: '1 1 340px', maxWidth: 480 }}>
+        <div className="card" style={{ flex: '2 1 340px' }}>
           {error   && <div className="alert alert-error">{error}</div>}
           {success && <div className="alert alert-success">{success}</div>}
 
@@ -294,7 +294,7 @@ export default function Profile() {
 
         {/* Badges — à droite, même hauteur que le formulaire */}
         <div className="card" style={{
-          flex: '1 1 340px', maxWidth: 480, alignSelf: 'stretch', minWidth: 200,
+          flex: '1 1 340px', alignSelf: 'stretch', minWidth: 200,
           display: 'flex', flexDirection: 'column', gap: 10,
         }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -335,7 +335,7 @@ export default function Profile() {
         {/* Classement ce mois — dernière carte */}
         {rankData && (
           <div className="card" style={{
-            flex: '1 1 220px', maxWidth: 300, alignSelf: 'stretch', minWidth: 200,
+            flex: '1 1 220px', alignSelf: 'stretch', minWidth: 200,
             display: 'flex', flexDirection: 'column', gap: 10,
           }}>
             <div className="card-title" style={{ marginBottom: 0 }}>🏆 Classement ce mois</div>
