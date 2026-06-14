@@ -199,6 +199,14 @@ async function verifyPassword(pw, stored) {
 // ── Rate-limit persisté en SQLite (résiste aux redémarrages) ─────────────────
 const RL_WINDOW_MS = 15 * 60 * 1000; // 15 min
 
+// Protège contre le blocage accidentel du proxy Nginx (127.0.0.1, ::1, LAN)
+function isPrivateIp(ip) {
+  if (!ip) return true;
+  return ip === '127.0.0.1' || ip === '::1' ||
+    ip.startsWith('10.') || ip.startsWith('192.168.') ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(ip);
+}
+
 class SqliteRateLimitStore {
   localKeys = true;
   constructor(windowMs) { this.windowMs = windowMs; }
@@ -243,6 +251,7 @@ const loginRateLimit = rateLimit({
   windowMs: RL_WINDOW_MS,
   max: 10,
   store: new SqliteRateLimitStore(RL_WINDOW_MS),
+  skip: (req) => isPrivateIp(req.ip),
   keyGenerator: (req) => `${req.ip}|${(req.body?.email || '').toLowerCase().trim()}`,
   handler: async (req, res) => {
     await logSecurityEvent('login_blocked', req.ip, null, (req.body?.email || '').toLowerCase().trim(), 'Rate limit IP+email');
@@ -257,6 +266,7 @@ const loginIpRateLimit = rateLimit({
   windowMs: RL_WINDOW_MS,
   max: 20,
   store: new SqliteRateLimitStore(RL_WINDOW_MS),
+  skip: (req) => isPrivateIp(req.ip),
   keyGenerator: (req) => `ip|${req.ip}`,
   handler: async (req, res) => {
     await logSecurityEvent('login_blocked', req.ip, null, (req.body?.email || '').toLowerCase().trim(), 'Rate limit IP globale');
@@ -270,6 +280,7 @@ const inviteRateLimit = rateLimit({
   windowMs: RL_WINDOW_MS,
   max: 5,
   store: new SqliteRateLimitStore(RL_WINDOW_MS),
+  skip: (req) => isPrivateIp(req.ip),
   keyGenerator: (req) => `invite|${req.ip}`,
   handler: (_req, res) => res.status(429).json({ error: 'Trop de tentatives. Réessayez dans 15 min.' }),
   standardHeaders: false,
