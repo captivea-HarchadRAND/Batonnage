@@ -354,6 +354,11 @@ function isValidUUID(s) {
   return typeof s === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
 }
 
+// Accepte UUIDs et IDs courts (marchés par défaut : mada, lux, fr…)
+function isValidId(s) {
+  return typeof s === 'string' && /^[a-z0-9_-]{1,64}$/i.test(s);
+}
+
 // ─── Auth middleware ──────────────────────────────────────────────────────────
 
 async function auth(req, res, next) {
@@ -590,7 +595,7 @@ app.post('/api/call-issues', auth, async (req, res) => {
   const { sdr_id, marche_id, issue_type, date, notes } = req.body;
   if (!issue_type) return res.status(400).json({ error: 'Type de problème requis' });
   if (sdr_id && !isValidUUID(sdr_id)) return res.status(400).json({ error: 'ID SDR invalide' });
-  if (marche_id && !isValidUUID(marche_id)) return res.status(400).json({ error: 'marche_id invalide' });
+  if (marche_id && !isValidId(marche_id)) return res.status(400).json({ error: 'marche_id invalide' });
   const targetSdr = req.user.role === 'sdr' ? req.user.id : (sdr_id || req.user.id);
   const db = await getDB();
   const id = uuidv4();
@@ -715,7 +720,7 @@ app.post('/api/rdvs', auth, async (req, res) => {
 
     const targetSdr = (req.user.role === 'sdr') ? req.user.id : (sdr_id || req.user.id);
     if (!marche_id) return res.status(400).json({ error: 'Marché requis' });
-    if (!isValidUUID(marche_id)) return res.status(400).json({ error: 'marche_id invalide' });
+    if (!isValidId(marche_id)) return res.status(400).json({ error: 'marche_id invalide' });
     const isAdmin = ['admin','manager'].includes(req.user.role);
     if (!isAdmin && !crm_url_pris && !crm_url_done) return res.status(400).json({ error: 'Au moins une URL CRM requise' });
     if (!isSafeCrmUrl(crm_url_pris) || !isSafeCrmUrl(crm_url_done))
@@ -768,7 +773,7 @@ app.put('/api/rdvs/:id', auth, async (req, res) => {
     const { crm_url_pris, date_pris, date_prevue, crm_url_done, date_done, notes, marche_id, status: bodyStatus } = req.body;
     if (!isSafeCrmUrl(crm_url_pris) || !isSafeCrmUrl(crm_url_done))
       return res.status(400).json({ error: 'URL CRM invalide (doit commencer par http:// ou https://)' });
-    if (marche_id !== undefined && !isValidUUID(marche_id))
+    if (marche_id !== undefined && !isValidId(marche_id))
       return res.status(400).json({ error: 'marche_id invalide' });
     // Un SDR ne peut pas déplacer un RDV vers un marché qui n'est pas le sien
     if (req.user.role === 'sdr' && marche_id != null && marche_id !== rdv.marche_id && !sdrHasMarche(db, req.user.id, marche_id))
@@ -1489,7 +1494,7 @@ app.put('/api/admin/rdvs/manual/:sdrId/:week/:year', auth, requireRole('manager'
       return res.status(400).json({ error: 'Semaine invalide (1-53)' });
     if (!Number.isInteger(iYear) || iYear < 2020 || iYear > 2099)
       return res.status(400).json({ error: 'Année invalide' });
-    if (!marche_id || !isValidUUID(marche_id))
+    if (!marche_id || !isValidId(marche_id))
       return res.status(400).json({ error: 'marche_id invalide' });
 
     const totalPris = Math.max(0, Math.min(parseInt(pris, 10) || 0, 999));
@@ -1576,7 +1581,7 @@ app.delete('/api/admin/users/:id', auth, requireRole('admin'), async (req, res) 
 // Assigner un utilisateur à un marché
 app.post('/api/admin/users/:id/marches/:marche_id', auth, requireRole('manager', 'admin'), async (req, res) => {
   const { id, marche_id } = req.params;
-  if (!isValidUUID(id) || !isValidUUID(marche_id)) return res.status(400).json({ error: 'ID invalide' });
+  if (!isValidUUID(id) || !isValidId(marche_id)) return res.status(400).json({ error: 'ID invalide' });
   const db = await getDB();
   db.run(`INSERT OR IGNORE INTO user_marches (user_id, marche_id) VALUES (?,?)`, [id, marche_id]);
   // Définir comme marché primaire si l'utilisateur n'en a pas encore
@@ -1589,7 +1594,7 @@ app.post('/api/admin/users/:id/marches/:marche_id', auth, requireRole('manager',
 // Retirer un utilisateur d'un marché
 app.delete('/api/admin/users/:id/marches/:marche_id', auth, requireRole('manager', 'admin'), async (req, res) => {
   const { id, marche_id } = req.params;
-  if (!isValidUUID(id) || !isValidUUID(marche_id)) return res.status(400).json({ error: 'ID invalide' });
+  if (!isValidUUID(id) || !isValidId(marche_id)) return res.status(400).json({ error: 'ID invalide' });
   const db = await getDB();
   db.run(`DELETE FROM user_marches WHERE user_id=? AND marche_id=?`, [id, marche_id]);
   // Si c'était le marché primaire, mettre à jour vers un autre marché ou null
